@@ -51,12 +51,40 @@ function detect(names) {
   return names[names.length - 1];
 }
 
+// Check whether we can actually open a DRM device for writing. kmssink needs
+// this; if the user isn't in the `video`/`render` group it will fail at
+// runtime with "Permission denied (13)" even though gst-inspect succeeds.
+function hasDrmAccess() {
+  try {
+    const dri = fs.readdirSync('/dev/dri').filter((f) => /^card\d+$/.test(f));
+    if (dri.length === 0) return false;
+    // Try opening the first card device with write access
+    const fd = fs.openSync('/dev/dri/' + dri[0], 'r+');
+    fs.closeSync(fd);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 const DEFAULT_DECODER = process.env.DECODER || detect([
   'v4l2h264dec', 'mppvideodec', 'nvh264dec', 'avdec_h264',
 ]);
-const DEFAULT_SINK = process.env.SINK || detect([
-  'kmssink', 'waylandsink', 'xvimagesink sync=false', 'autovideosink',
-]);
+const DEFAULT_SINK = process.env.SINK || (() => {
+  const candidates = ['kmssink', 'waylandsink', 'xvimagesink sync=false', 'autovideosink'];
+  for (const n of candidates) {
+    try {
+      execSync('gst-inspect-1.0 ' + n.split(' ')[0], { stdio: 'ignore' });
+      // kmssink requires direct DRM access — skip if we don't have it
+      if (n === 'kmssink' && !hasDrmAccess()) {
+        console.warn('[server] kmssink detected but DRM access denied — skipping (add user to video/render groups)');
+        continue;
+      }
+      return n;
+    } catch (_) { /* next */ }
+  }
+  return 'autovideosink';
+})();
 
 console.log(`[server] device="${deviceName}" decoder=${DEFAULT_DECODER} sink=${DEFAULT_SINK}`);
 

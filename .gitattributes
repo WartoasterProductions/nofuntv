@@ -1,0 +1,6 @@
+# Force LF for shell scripts so they work on Linux/Pi after clone/deploy
+*.sh    text eol=lf
+*.py    text eol=lf
+
+# Normal auto line endings for everything else
+*       text=auto

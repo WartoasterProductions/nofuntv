@@ -64,58 +64,130 @@ ipcMain.handle('open-file', async () => {
   return r.canceled ? null : r.filePaths[0];
 });
 
-// ─── mDNS discovery ───────────────────────────────────────────────────────────
+// ─── Device discovery ─────────────────────────────────────────────────────────
+
+const http = require('http');
 
 const discoveredDevices = new Map(); // id → device info
 let bonjourBrowser  = null;
 let bonjourInstance = null;
+let subnetScanTimer = null;
 
-function startDiscovery() {
+// Probe a single IP:port for /api/health. Resolves with health JSON or null.
+function probeDevice(ip, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { hostname: ip, port, path: '/api/health', timeout: timeoutMs },
+      (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(body);
+            if (j && j.ok) return resolve(j);
+          } catch (_) {}
+          resolve(null);
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
+// Register a device found by any means (subnet scan or mDNS).
+function registerDevice(ip, port, info) {
+  const id = ip + ':' + port;
+  if (discoveredDevices.has(id)) {
+    // Already known — just make sure we're connected
+    if (!deviceClients.has(id)) connectToDevice(id, discoveredDevices.get(id));
+    return;
+  }
+  const dev = {
+    id,
+    name:    info.device || ip,
+    host:    ip,
+    ip,
+    port,
+    decoder: info.decoder || 'avdec_h264',
+    sink:    info.sink    || 'autovideosink',
+    status:  'discovered',
+  };
+  discoveredDevices.set(id, dev);
+  console.log('[discovery] found "' + dev.name + '" at ' + id);
+  connectToDevice(id, dev);
+}
+
+// Scan every host on all local /24 subnets in parallel (400 ms timeout per host).
+async function scanSubnet() {
+  const nets    = os.networkInterfaces();
+  const subnets = new Set();
+  for (const iface of Object.values(nets)) {
+    for (const addr of (iface || [])) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        const parts = addr.address.split('.');
+        subnets.add(parts[0] + '.' + parts[1] + '.' + parts[2] + '.');
+      }
+    }
+  }
+  if (subnets.size === 0) return;
+
+  const probes = [];
+  for (const prefix of subnets) {
+    for (let i = 1; i <= 254; i++) {
+      const ip = prefix + i;
+      probes.push(
+        probeDevice(ip, 80, 400).then((health) => {
+          if (health) registerDevice(ip, 80, health);
+        })
+      );
+    }
+  }
+
+  await Promise.all(probes);
+  send('device-update', serializeDevices());
+  console.log('[discovery] subnet scan complete, ' + discoveredDevices.size + ' device(s) known');
+}
+
+// Also try mDNS as a bonus — works when Bonjour is available on the host OS.
+function startMdnsBrowser() {
   try {
     const { Bonjour } = require('bonjour-service');
     bonjourInstance = new Bonjour();
     bonjourBrowser  = bonjourInstance.find({ type: 'nofuntv' }, (service) => {
-      const id = service.host + ':' + service.port;
       const ip = (service.addresses || []).find((a) => !a.includes(':')) || service.host;
-      if (!discoveredDevices.has(id)) {
-        const info = {
-          id, name: service.name || service.host, host: service.host,
-          ip, port: service.port,
-          decoder: (service.txt && service.txt.decoder) || 'avdec_h264',
-          sink:    (service.txt && service.txt.sink)    || 'autovideosink',
-          status: 'discovered',
-        };
-        discoveredDevices.set(id, info);
-        console.log('[discovery] found "' + info.name + '" at ' + ip + ':' + service.port);
-        connectToDevice(id, info);
-      }
+      registerDevice(ip, service.port, {
+        device:  service.name,
+        decoder: service.txt && service.txt.decoder,
+        sink:    service.txt && service.txt.sink,
+      });
+      send('device-update', serializeDevices());
     });
     console.log('[discovery] mDNS browser started (_nofuntv._tcp)');
   } catch (e) {
-    console.warn('[discovery] bonjour-service unavailable:', e.message);
+    console.warn('[discovery] mDNS unavailable:', e.message);
+  }
+}
+
+function startDiscovery() {
+  startMdnsBrowser();
+  scanSubnet();
+  // Re-scan every 30 s to catch devices that appear after boot
+  if (!subnetScanTimer) {
+    subnetScanTimer = setInterval(scanSubnet, 30000);
   }
 }
 
 ipcMain.handle('discovery-start', () => {
-  if (!bonjourBrowser) startDiscovery();
+  if (!bonjourBrowser && !subnetScanTimer) startDiscovery();
   return { ok: true };
 });
 
-// Full re-scan: destroy browser, wait, restart it, then also ping known devices
 ipcMain.handle('discovery-scan', () => {
-  // Ping existing connected devices
+  // Ping already-connected devices immediately
   for (const [id] of deviceClients) wsSend(id, { type: 'status' });
-  // Restart the mDNS browser so newly-appeared devices get found
-  if (bonjourBrowser) {
-    try { bonjourBrowser.stop(); } catch (_) {}
-    bonjourBrowser = null;
-  }
-  if (bonjourInstance) {
-    try { bonjourInstance.destroy(); } catch (_) {}
-    bonjourInstance = null;
-  }
-  // Short delay then restart so the network stack flushes
-  setTimeout(startDiscovery, 300);
+  // Run a fresh subnet scan right now
+  scanSubnet();
   return { ok: true, devices: serializeDevices() };
 });
 

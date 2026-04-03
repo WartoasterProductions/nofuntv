@@ -66,6 +66,25 @@ fi
 section "Script permissions"
 chmod +x "$DEPLOY_DIR"/scripts/*.sh
 
+# ── DRM / KMS access (required for kmssink) ──────────────────────────────────
+section "DRM group membership"
+if ! groups "$PI_USER" | grep -qw video; then
+  sudo usermod -aG video,render "$PI_USER"
+  echo "    Added $PI_USER to video,render groups (reboot required to take effect)"
+else
+  echo "    $PI_USER already in video group"
+fi
+
+# ── WiFi power-save off (prevents Pi dropping off network under CPU load) ─────
+section "WiFi power-save"
+NM_CONF=/etc/NetworkManager/conf.d/wifi-powersave-off.conf
+if [[ ! -f "$NM_CONF" ]] || ! grep -q 'wifi.powersave = 2' "$NM_CONF" 2>/dev/null; then
+  printf '[connection]\nwifi.powersave = 2\n' | sudo tee "$NM_CONF" > /dev/null
+  echo "    WiFi power-save disabled via NetworkManager config"
+else
+  echo "    WiFi power-save already disabled"
+fi
+
 # ── Desktop wallpaper ────────────────────────────────────────────────────────
 section "Desktop wallpaper"
 if [[ -f "$LOGO_PATH" ]]; then

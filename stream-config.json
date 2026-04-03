@@ -1,0 +1,8 @@
+{
+  "streamUrl": "",
+  "mode": "pull",
+  "protocol": "udp",
+  "receivePort": 5000,
+  "hostName": "",
+  "mdnsName": ""
+}

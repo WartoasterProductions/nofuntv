@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>No Fun TV</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=VT323&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="frame">
+    <header class="top">
+      <div class="brand-row">
+        <img class="brand-logo" src="/assets/NoFunLogo.png" alt="No Fun" />
+        <div class="agent-status" id="agent-status">
+          <span class="agent-dot" id="agent-dot"></span>
+          <span id="agent-label">connecting…</span>
+        </div>
+      </div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="stream">Stream</button>
+        <button class="tab" data-tab="network">Network</button>
+        <button class="tab" data-tab="device">Device</button>
+      </nav>
+    </header>
+
+    <!-- ═══════ STREAM TAB ═══════ -->
+    <section class="pane active" id="pane-stream">
+      <div class="card">
+        <form id="stream-form" class="form" autocomplete="off">
+
+          <!-- Mode selector -->
+          <div class="mode-selector">
+            <label class="mode-option">
+              <input type="radio" name="stream-mode" value="pull" checked>
+              <span class="mode-label">
+                <span class="mode-title">PULL</span>
+                <span class="mode-desc">Device fetches stream (RTSP, HTTP, file)</span>
+              </span>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="stream-mode" value="push">
+              <span class="mode-label">
+                <span class="mode-title">PUSH</span>
+                <span class="mode-desc">Listen for incoming stream (RTP/UDP, SRT)</span>
+              </span>
+            </label>
+          </div>
+
+          <!-- Pull mode fields -->
+          <div id="pull-fields">
+            <label for="stream-url" class="label">Stream URL</label>
+            <input id="stream-url" class="input" type="text" placeholder="rtsp://192.168.1.20:554/live">
+            <p class="hint">RTSP, HTTP (HLS/DASH), MJPEG, or any URI GStreamer &amp; playbin can handle.</p>
+          </div>
+
+          <!-- Push mode fields -->
+          <div id="push-fields" class="hidden">
+            <div class="field-row">
+              <div class="field-col">
+                <label class="label">Protocol</label>
+                <select id="push-proto" class="input select">
+                  <option value="udp" selected>RTP / UDP</option>
+                  <option value="srt">SRT</option>
+                </select>
+              </div>
+              <div class="field-col">
+                <label class="label">Receive port</label>
+                <input id="push-port" class="input" type="number" value="5000" min="1024" max="65535">
+              </div>
+            </div>
+            <p class="hint">
+              The Electron frontend (or any GStreamer sender) pushes H.264/RTP to this port.
+              <br>Pipeline: <code>udpsrc port=&lt;port&gt; ! rtph264depay ! decoder ! sink</code>
+            </p>
+          </div>
+
+          <div class="actions">
+            <button type="submit" class="button">Apply</button>
+            <button type="button" id="clear-stream" class="button ghost">Clear / Stop</button>
+          </div>
+        </form>
+        <div id="status" class="status">Ready.</div>
+      </div>
+
+      <!-- Active stream info -->
+      <div class="card subtle" id="stream-info-card">
+        <h2 class="card-title">Current stream</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Mode</span>
+            <span class="info-value" id="info-mode">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Source</span>
+            <span class="info-value mono" id="info-source">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Decoder</span>
+            <span class="info-value mono" id="info-decoder">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Sink</span>
+            <span class="info-value mono" id="info-sink">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Active streams (agent)</span>
+            <span class="info-value" id="info-agent-streams">—</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════ NETWORK TAB ═══════ -->
+    <section class="pane" id="pane-network">
+      <div class="card">
+        <div class="scan-header">
+          <h2 class="card-title">Network discovery</h2>
+          <div class="scan-btns">
+            <button type="button" id="scan-all" class="button ghost">Scan all</button>
+            <button type="button" id="scan-rtsp" class="button ghost">RTSP only</button>
+            <button type="button" id="scan-nofuntv" class="button ghost">NoFunTV only</button>
+          </div>
+        </div>
+        <div id="scan-status" class="status muted">Not scanned yet.</div>
+        <ul id="scan-results" class="scan-results"></ul>
+      </div>
+    </section>
+
+    <!-- ═══════ DEVICE TAB ═══════ -->
+    <section class="pane" id="pane-device">
+      <div class="card">
+        <h2 class="card-title">Device settings</h2>
+        <div class="form">
+          <label for="host-name" class="label">Hostname</label>
+          <input id="host-name" class="input" type="text" placeholder="nofuntv-01" autocomplete="off">
+          <p class="hint">OS hostname (hostnamectl). Current: <span class="accent" id="current-host">—</span></p>
+
+          <label for="mdns-name" class="label">mDNS name</label>
+          <input id="mdns-name" class="input" type="text" placeholder="nofuntv" autocomplete="off">
+          <p class="hint">Reachable as <span class="accent" id="mdns-preview">nofuntv.local</span></p>
+
+          <div class="actions">
+            <button type="button" id="save-device" class="button">Save device settings</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card subtle">
+        <h2 class="card-title">Hardware info</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Detected decoder</span>
+            <span class="info-value mono" id="hw-decoder">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Detected sink</span>
+            <span class="info-value mono" id="hw-sink">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Platform</span>
+            <span class="info-value mono" id="hw-platform">—</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Device name</span>
+            <span class="info-value" id="hw-device-name">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card subtle">
+        <h2 class="card-title">Connected controllers</h2>
+        <div id="controller-list" class="controller-list">
+          <p class="hint">No Electron frontends connected yet.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

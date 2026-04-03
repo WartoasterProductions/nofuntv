@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:;">
+  <title>NoFun GST</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Titlebar ─────────────────────────────────────────────────────────── -->
+<div id="titlebar">
+  <div id="brand">
+    <img id="brand-logo" src="../assets/NoFunLogo.png" alt="">
+    <span id="brand-name">GST CONTROL</span>
+  </div>
+  <div id="drag-region">
+    <!-- Live device count badge -->
+    <div id="device-badge" class="badge hidden">
+      <span class="badge-dot"></span>
+      <span id="badge-count">0</span> DEVICES
+    </div>
+  </div>
+  <div id="win-controls">
+    <button id="btn-min"   title="Minimise">&#8722;</button>
+    <button id="btn-max"   title="Maximise">&#9744;</button>
+    <button id="btn-close" title="Close">&#10005;</button>
+  </div>
+</div>
+
+<!-- ── Tab bar ──────────────────────────────────────────────────────────── -->
+<nav id="tabbar">
+  <button class="tab active" data-tab="streams">&#9654; STREAMS</button>
+  <button class="tab"        data-tab="devices">&#11042; DEVICES</button>
+  <button class="tab"        data-tab="terminal">&#62;_ TERMINAL</button>
+  <button class="tab"        data-tab="settings">&#9881; SETTINGS</button>
+</nav>
+
+<!-- ── Panes ─────────────────────────────────────────────────────────────── -->
+<div id="panes">
+
+  <!-- ────────────────────────────────────────── STREAMS ──────────────────── -->
+  <div id="pane-streams" class="pane active">
+    <div class="streams-layout">
+
+      <!-- Sidebar: stream slot list -->
+      <div id="stream-sidebar" style="width:200px">
+        <div class="sidebar-hdr">
+          <span class="section-title">STREAMS</span>
+          <button class="btn ghost tiny" id="btn-add-stream">+ NEW</button>
+        </div>
+        <ul id="stream-list-ul"></ul>
+      </div>
+      <div class="resize-handle" id="rh-sidebar" title="Drag to resize"></div>
+
+      <!-- Main: selected stream editor -->
+      <div id="stream-editor">
+        <div id="stream-editor-empty" class="editor-empty">
+          <span>&#9654;</span>
+          <p>Create or select a stream slot</p>
+        </div>
+
+        <div id="stream-editor-form" class="hidden">
+          <div class="editor-split">
+
+            <!-- Left: source + encoder + transport -->
+            <div class="editor-left panel" id="editor-left-panel" style="width:300px">
+
+              <!-- Source -->
+              <section class="ctrl-section">
+                <h3 class="section-title">SOURCE</h3>
+                <div class="radio-group">
+                  <label><input type="radio" name="es-src-type" value="file"   checked> File</label>
+                  <label><input type="radio" name="es-src-type" value="screen"> Screen</label>
+                  <label><input type="radio" name="es-src-type" value="url">    URL</label>
+                  <label><input type="radio" name="es-src-type" value="rtsp">   RTSP</label>
+                  <label><input type="radio" name="es-src-type" value="webcam"> Webcam</label>
+                </div>
+                <div id="es-src-file-row"   class="src-row"><button class="btn ghost small" id="es-btn-browse">Browse…</button><span id="es-file-display" class="path-display">no file</span></div>
+                <div id="es-src-url-row"    class="src-row hidden"><input class="text-input" id="es-src-url" type="text" placeholder="http://host/stream.m3u8"></div>
+                <div id="es-src-rtsp-row"   class="src-row hidden"><input class="text-input" id="es-src-rtsp-url" type="text" placeholder="rtsp://192.168.1.x:554/live"><p class="field-hint">RTSP pull — devices will fetch this stream directly (no re-encode on sender)</p></div>
+                <div id="es-src-webcam-row" class="src-row hidden"><input class="text-input" id="es-webcam-dev" type="text" placeholder="/dev/video0 or 0"></div>
+                <div id="es-src-screen-row" class="src-row hidden"><label class="field-label">Monitor</label><input class="text-input short" id="es-screen-idx" type="number" value="0" min="0"></div>
+              </section>
+
+              <!-- Video -->
+              <section class="ctrl-section">
+                <h3 class="section-title">VIDEO</h3>
+                <div class="row2">
+                  <div>
+                    <label class="field-label">Resolution</label>
+                    <select class="select" id="es-res">
+                      <option value="1920x1080">1920 × 1080</option>
+                      <option value="1280x720" selected>1280 × 720</option>
+                      <option value="854x480">854 × 480</option>
+                      <option value="640x360">640 × 360</option>
+                      <option value="custom">Custom…</option>
+                    </select>
+                    <div id="es-res-custom" class="custom-res hidden">
+                      <input class="text-input short" id="es-width"  type="number" value="1280" placeholder="W">
+                      <span class="dim">×</span>
+                      <input class="text-input short" id="es-height" type="number" value="720"  placeholder="H">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="field-label">Framerate</label>
+                    <select class="select" id="es-fps">
+                      <option value="60">60 fps</option>
+                      <option value="30" selected>30 fps</option>
+                      <option value="24">24 fps</option>
+                      <option value="15">15 fps</option>
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Encoder -->
+              <section class="ctrl-section">
+                <h3 class="section-title">ENCODER</h3>
+                <select class="select" id="es-codec">
+                  <option value="x264enc">x264enc (software)</option>
+                  <option value="nvh264enc">nvh264enc (NVIDIA)</option>
+                  <option value="vaapih264enc">vaapih264enc (Intel/AMD)</option>
+                  <option value="mfh264enc">mfh264enc (Intel QSV/Win)</option>
+                </select>
+                <div class="knob-row">
+                  <div class="knob-group">
+                    <label class="field-label">Bitrate <span class="knob-val" id="es-val-bitrate">4000</span> kbps</label>
+                    <input type="range" class="slider" id="es-bitrate" min="500" max="20000" step="100" value="4000">
+                  </div>
+                  <div class="knob-group">
+                    <label class="field-label">Keyframe every <span class="knob-val" id="es-val-keyframe">30</span> frames</label>
+                    <input type="range" class="slider" id="es-keyframe" min="1" max="120" step="1" value="30">
+                  </div>
+                </div>
+                <div id="es-x264-opts">
+                  <div class="row2">
+                    <div>
+                      <label class="field-label">Preset</label>
+                      <select class="select" id="es-preset">
+                        <option value="ultrafast" selected>ultrafast</option>
+                        <option value="superfast">superfast</option>
+                        <option value="veryfast">veryfast</option>
+                        <option value="medium">medium</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="field-label">Tune</label>
+                      <select class="select" id="es-tune">
+                        <option value="zerolatency" selected>zerolatency</option>
+                        <option value="film">film</option>
+                        <option value="animation">animation</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- Transport -->
+              <section class="ctrl-section">
+                <h3 class="section-title">TRANSPORT</h3>
+                <div class="row2">
+                  <div>
+                    <label class="field-label">Protocol</label>
+                    <select class="select" id="es-proto">
+                      <option value="udp" selected>UDP</option>
+                      <option value="srt">SRT</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">Base port + slot</label>
+                    <input class="text-input short" id="es-port-preview" type="text" readonly>
+                  </div>
+                </div>
+                <div class="knob-group">
+                  <label class="field-label">Jitter buffer <span class="knob-val" id="es-val-jitter">50</span> ms</label>
+                  <input type="range" class="slider" id="es-jitter" min="0" max="500" step="10" value="50">
+                </div>
+              </section>
+
+            </div><!-- /editor-left -->
+            <div class="resize-handle" id="rh-editor-left" title="Drag to resize"></div>
+
+            <!-- Right: device routing + pipeline + log -->
+            <div class="editor-right">
+
+              <!-- Device routing -->
+              <div class="panel routing-panel">
+                <div class="rp-header">
+                  <h3 class="section-title">ROUTE TO DEVICES</h3>
+                  <div class="rp-quick">
+                    <button class="btn ghost tiny" id="rp-all">all</button>
+                    <button class="btn ghost tiny" id="rp-none">none</button>
+                  </div>
+                </div>
+                <div id="device-routing-list" class="device-routing-list">
+                  <p class="no-devices-hint">No devices discovered yet.<br>Go to the DEVICES tab to add manually.</p>
+                </div>
+              </div>
+
+              <!-- Pipeline preview -->
+              <div class="panel pipeline-panel">
+                <div class="pp-header">
+                  <h3 class="section-title">PIPELINE</h3>
+                  <button class="btn ghost tiny" id="es-copy-pipe">copy</button>
+                </div>
+                <textarea id="es-pipeline" class="pipeline-textarea" spellcheck="false" rows="3"></textarea>
+              </div>
+
+              <!-- Actions -->
+              <div class="stream-actions-bar">
+                <button class="btn primary large" id="es-start">&#9654; START</button>
+                <button class="btn danger  large hidden" id="es-stop">&#9632; STOP</button>
+                <span class="status-dot" id="es-status-dot"></span>
+                <span class="status-text" id="es-status-text">idle</span>
+                <button class="btn ghost small ml-auto" id="es-delete-stream">&#10005; DELETE SLOT</button>
+              </div>
+
+              <!-- Log -->
+              <div class="panel log-section" style="flex:1;min-height:0;">
+                <div class="log-header">
+                  <span class="section-title">OUTPUT</span>
+                  <button class="btn ghost tiny" id="es-clear-log">clear</button>
+                </div>
+                <div class="log" id="es-log"></div>
+              </div>
+
+            </div><!-- /editor-right -->
+          </div><!-- /editor-split -->
+        </div><!-- /stream-editor-form -->
+
+      </div><!-- /stream-editor -->
+    </div><!-- /streams-layout -->
+  </div><!-- /pane-streams -->
+
+
+  <!-- ────────────────────────────────────────── DEVICES ──────────────────── -->
+  <div id="pane-devices" class="pane">
+    <div class="devices-toolbar">
+      <h3 class="section-title">DISCOVERED DEVICES</h3>
+      <div class="devices-toolbar-actions">
+        <button class="btn ghost small" id="btn-scan">&#9654; SCAN</button>
+        <button class="btn ghost small" id="btn-add-device">+ MANUAL ADD</button>
+      </div>
+    </div>
+
+    <!-- Manual add form (collapsed by default) -->
+    <div id="manual-add-form" class="manual-add-form hidden">
+      <input class="text-input" id="manual-ip"   type="text"   placeholder="192.168.1.x">
+      <input class="text-input short" id="manual-port" type="number" value="80" placeholder="80">
+      <input class="text-input" id="manual-name"  type="text"   placeholder="Device name (optional)">
+      <button class="btn primary small" id="manual-add-confirm">ADD</button>
+      <button class="btn ghost  small" id="manual-add-cancel">cancel</button>
+    </div>
+
+    <div id="device-cards" class="device-cards">
+      <div class="no-devices-hint">
+        <p>No devices found.</p>
+        <p class="hint">Make sure <code>agent.js</code> is running on your Pi / Orange Pi devices.<br>
+           They will appear here automatically via mDNS, or add them manually above.</p>
+      </div>
+    </div>
+  </div><!-- /pane-devices -->
+
+
+  <!-- ────────────────────────────────────────── TERMINAL ─────────────────── -->
+  <div id="pane-terminal" class="pane">
+    <div class="term-header">
+      <span class="section-title">RAW COMMAND TERMINAL</span>
+      <div class="term-actions">
+        <button class="btn ghost small" id="term-kill">&#9632; KILL</button>
+        <button class="btn ghost small" id="term-clear">clear</button>
+      </div>
+    </div>
+    <div class="log term-log" id="term-log"></div>
+    <div class="term-input-row">
+      <span class="term-prompt">&#62;_</span>
+      <input class="term-input" id="term-input" type="text"
+             placeholder="gst-launch-1.0 videotestsrc ! autovideosink"
+             spellcheck="false" autocomplete="off">
+      <button class="btn primary" id="term-run">RUN</button>
+    </div>
+  </div>
+
+
+  <!-- ────────────────────────────────────────── SETTINGS ─────────────────── -->
+  <div id="pane-settings" class="pane">
+    <div class="settings-grid">
+
+      <div class="panel">
+        <section class="ctrl-section">
+          <h3 class="section-title">GSTREAMER BINARY</h3>
+          <label class="field-label">gst-launch-1.0 path</label>
+          <input class="text-input" id="cfg-gst-bin" type="text" placeholder="gst-launch-1.0">
+          <div class="hint">Leave blank to use system PATH.<br>
+            Windows: <code>C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe</code></div>
+        </section>
+      </div>
+
+      <div class="panel">
+        <section class="ctrl-section">
+          <h3 class="section-title">STREAM DEFAULTS</h3>
+          <label class="field-label">Base UDP port (stream 1 = base, stream 2 = base+1 …)</label>
+          <input class="text-input short" id="cfg-base-port" type="number" value="5000">
+          <label class="field-label">Default device WS port</label>
+          <input class="text-input short" id="cfg-agent-port" type="number" value="80">
+        </section>
+      </div>
+
+      <div class="panel">
+        <section class="ctrl-section">
+          <h3 class="section-title">DIAGNOSTICS</h3>
+          <button class="btn ghost" id="diag-gst-version">gst-launch --version</button>
+          <button class="btn ghost" id="diag-inspect-h264">inspect H.264 elements</button>
+          <button class="btn ghost" id="diag-inspect-udp">inspect UDP elements</button>
+        </section>
+      </div>
+
+    </div>
+  </div><!-- /pane-settings -->
+
+</div><!-- /panes -->
+
+<script src="renderer.js"></script>
+</body>
+</html>

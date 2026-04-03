@@ -82,7 +82,7 @@ async function loadConfig() {
     // Device settings
     hostInput.value = data.hostName || '';
     mdnsInput.value = data.mdnsName || '';
-    currentHost.textContent = data.currentHost || 'unknown';
+    currentHost.textContent = data.deviceName || data.currentHost || 'unknown';
     mdnsPreview.textContent = (data.mdnsName || 'nofuntv') + '.local';
 
     // Hardware info
@@ -184,7 +184,11 @@ $('save-device').addEventListener('click', async () => {
       throw new Error(err.error || 'Save failed');
     }
     const data = await res.json();
-    currentHost.textContent = data.currentHost || 'unknown';
+    currentHost.textContent = data.deviceName || data.currentHost || 'unknown';
+    if (hwDeviceName) hwDeviceName.textContent = data.deviceName || '—';
+    hostInput.value = data.hostName || '';
+    mdnsInput.value = data.mdnsName || '';
+    mdnsPreview.textContent = (data.mdnsName || 'nofuntv') + '.local';
     setStatus('Device settings saved.', 'ok');
   } catch (err) {
     setStatus(err.message, 'error');

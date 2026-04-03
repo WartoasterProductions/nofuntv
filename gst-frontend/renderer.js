@@ -498,12 +498,16 @@ function buildPipelineString(config, ips, port) {
 function renderDeviceRoutingList() {
   const container = document.getElementById('device-routing-list');
   const stream    = streams.get(selectedStreamId);
-  if (!stream) return;
 
   container.innerHTML = '';
 
   if (devices.length === 0) {
     container.innerHTML = '<p class="no-devices-hint">No devices discovered yet.<br>Go to DEVICES tab to add manually.</p>';
+    return;
+  }
+
+  if (!stream) {
+    container.innerHTML = '<p class="no-devices-hint">Select a stream to assign devices.</p>';
     return;
   }
 

@@ -216,12 +216,14 @@ ipcMain.handle('device-remove', (_, id) => {
 });
 
 ipcMain.handle('device-update-config', (_, opts) => {
-  const { id, decoder, sink } = opts;
+  const { id, decoder, sink, name } = opts;
   const dev = discoveredDevices.get(id);
   if (!dev) return { ok: false };
   if (decoder) dev.decoder = decoder;
   if (sink)    dev.sink    = sink;
+  if (name)    dev.name    = name;
   discoveredDevices.set(id, dev);
+  send('device-update', serializeDevices());
   return { ok: true };
 });
 

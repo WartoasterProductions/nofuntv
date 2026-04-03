@@ -620,7 +620,7 @@ function renderDeviceCards() {
 
     card.innerHTML =
       '<div class="dc-header">'
-      +   '<span class="dc-name">' + esc(dev.name || dev.ip) + '</span>'
+      +   '<span class="dc-name" contenteditable="plaintext-only" spellcheck="false" title="Click to rename">' + esc(dev.name || dev.ip) + '</span>'
       +   '<span class="dc-status"><span class="dc-dot ' + (dev.connected ? 'online' : 'offline') + '"></span>'
       +     (dev.connected ? 'connected' : 'offline') + '</span>'
       + '</div>'
@@ -649,6 +649,15 @@ function renderDeviceCards() {
       +   '<button class="btn ghost tiny dc-ping">PING</button>'
       +   '<button class="btn danger tiny dc-remove">REMOVE</button>'
       + '</div>';
+
+    // Name edit → save on blur or Enter
+    const nameEl = card.querySelector('.dc-name');
+    const saveName = () => {
+      const n = nameEl.textContent.trim();
+      if (n && n !== dev.name) window.gst.deviceUpdateConfig({ id: dev.id, name: n });
+    };
+    nameEl.addEventListener('blur', saveName);
+    nameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); nameEl.blur(); } });
 
     // Override change → persist to main
     card.querySelector('.dc-decoder-sel').addEventListener('change', (e) =>

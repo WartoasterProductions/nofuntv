@@ -10,8 +10,6 @@ const hostInput    = $('host-name');
 const mdnsInput    = $('mdns-name');
 const currentHost  = $('current-host');
 const mdnsPreview  = $('mdns-preview');
-const scanStatus   = $('scan-status');
-const scanResults  = $('scan-results');
 const pullFields   = $('pull-fields');
 const pushFields   = $('push-fields');
 const pushProto    = $('push-proto');
@@ -192,76 +190,6 @@ $('save-device').addEventListener('click', async () => {
     setStatus(err.message, 'error');
   }
 });
-
-// ── Network scanning ─────────────────────────────────────────────────────────
-async function scan(type) {
-  scanStatus.textContent = 'Scanning (' + type + ')…';
-  scanResults.innerHTML  = '';
-  try {
-    const res = await fetch('/api/scan-streams?type=' + type);
-    if (!res.ok) throw new Error('Scan failed');
-    const data = await res.json();
-    renderScanResults(data.services || []);
-  } catch (e) {
-    scanStatus.textContent = e.message || 'Scan failed';
-  }
-}
-
-function renderScanResults(services) {
-  scanResults.innerHTML = '';
-  if (!services.length) {
-    scanStatus.textContent = 'No services found.';
-    return;
-  }
-  scanStatus.textContent = 'Found ' + services.length + ' service' + (services.length > 1 ? 's' : '') + '.';
-
-  services.forEach((svc) => {
-    const li   = document.createElement('li');
-    const badge = svc.serviceType === 'nofuntv' ? 'NOFUNTV' : 'RTSP';
-    const addr  = svc.address || svc.hostname || 'unknown';
-    const port  = svc.port || '';
-
-    li.innerHTML =
-      '<div class="scan-meta">' +
-        '<div class="scan-name">' +
-          '<span class="svc-badge ' + badge.toLowerCase() + '">' + badge + '</span> ' +
-          '<strong>' + esc(svc.name || 'unknown') + '</strong>' +
-        '</div>' +
-        '<div class="addr">' + esc(addr) + (port ? ':' + port : '') + '</div>' +
-      '</div>';
-
-    const useBtn = document.createElement('button');
-    useBtn.className = 'button ghost';
-
-    if (svc.serviceType === 'rtsp' && addr) {
-      useBtn.textContent = 'Use as RTSP';
-      useBtn.addEventListener('click', () => {
-        // Switch to pull mode and fill URL
-        const pullRadio = document.querySelector('input[name="stream-mode"][value="pull"]');
-        pullRadio.checked = true;
-        pullRadio.dispatchEvent(new Event('change'));
-        urlInput.value = 'rtsp://' + addr + ':' + (port || 554) + '/';
-        document.querySelector('[data-tab="stream"]').click();
-        setStatus('Prefilled RTSP URL from scan. Adjust path and click Apply.', '');
-      });
-    } else if (svc.serviceType === 'nofuntv' && addr) {
-      useBtn.textContent = 'Open UI';
-      useBtn.addEventListener('click', () => {
-        window.open('http://' + addr + ':' + (port || 80), '_blank');
-      });
-    } else {
-      useBtn.textContent = 'No address';
-      useBtn.disabled = true;
-    }
-
-    li.appendChild(useBtn);
-    scanResults.appendChild(li);
-  });
-}
-
-$('scan-all').addEventListener('click',     () => scan('all'));
-$('scan-rtsp').addEventListener('click',    () => scan('rtsp'));
-$('scan-nofuntv').addEventListener('click', () => scan('nofuntv'));
 
 // ── WebSocket agent status ───────────────────────────────────────────────────
 let ws = null;

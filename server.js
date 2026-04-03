@@ -30,7 +30,7 @@ const WebSocket    = require('ws');
 // ── Paths / constants ────────────────────────────────────────────────────────
 const PORT            = Number(process.env.PORT || 80);
 const HOST            = process.env.HOST || '0.0.0.0';
-const DEVICE_NAME     = process.env.DEVICE_NAME || os.hostname();
+let   deviceName      = process.env.DEVICE_NAME || os.hostname();
 const CONFIG_PATH     = path.join(__dirname, 'stream-config.json');
 const PUBLIC_DIR      = path.join(__dirname, 'public');
 const ASSETS_DIR      = path.join(__dirname, 'assets');
@@ -58,7 +58,7 @@ const DEFAULT_SINK = process.env.SINK || detect([
   'kmssink', 'waylandsink', 'xvimagesink sync=false', 'autovideosink',
 ]);
 
-console.log(`[server] device="${DEVICE_NAME}" decoder=${DEFAULT_DECODER} sink=${DEFAULT_SINK}`);
+console.log(`[server] device="${deviceName}" decoder=${DEFAULT_DECODER} sink=${DEFAULT_SINK}`);
 
 // ── Config file helpers ──────────────────────────────────────────────────────
 function loadConfig() {
@@ -91,7 +91,7 @@ app.get('/api/config', (_req, res) => {
     currentHost: os.hostname(),
     decoder:     DEFAULT_DECODER,
     sink:        DEFAULT_SINK,
-    deviceName:  DEVICE_NAME,
+    deviceName:  deviceName,
   }));
 });
 
@@ -150,8 +150,15 @@ app.post('/api/config', (req, res) => {
     updates.mdnsName = candidate;
   }
 
+  // Apply display name change immediately (no OS hostnamectl needed)
+  if (updates.hostName) {
+    deviceName = updates.hostName;
+    reAdvertiseMdns();
+    broadcastAll({ type: 'hello', device: deviceName, decoder: DEFAULT_DECODER, sink: DEFAULT_SINK, platform: process.platform, activeStreams: Array.from(streamProcs.keys()) });
+  }
+
   const saved = saveConfig(updates);
-  res.json(Object.assign({}, saved, { currentHost: os.hostname() }));
+  res.json(Object.assign({}, saved, { currentHost: os.hostname(), deviceName }));
 
   // Trigger run-player.sh reload
   if (RESTART_ON_SAVE) {
@@ -165,7 +172,7 @@ app.post('/api/config', (req, res) => {
 app.get('/api/health', (_req, res) => {
   res.json({
     ok:           true,
-    device:       DEVICE_NAME,
+    device:       deviceName,
     decoder:      DEFAULT_DECODER,
     sink:         DEFAULT_SINK,
     platform:     process.platform,
@@ -336,7 +343,7 @@ wss.on('connection', function (ws, req) {
   // Greet with device info
   send({
     type:         'hello',
-    device:       DEVICE_NAME,
+    device:       deviceName,
     decoder:      DEFAULT_DECODER,
     sink:         DEFAULT_SINK,
     platform:     process.platform,
@@ -368,7 +375,7 @@ wss.on('connection', function (ws, req) {
       case 'status':
         send({
           type:         'status',
-          device:       DEVICE_NAME,
+          device:       deviceName,
           decoder:      DEFAULT_DECODER,
           sink:         DEFAULT_SINK,
           activeStreams: Array.from(streamProcs.keys()),
@@ -401,6 +408,14 @@ wss.on('connection', function (ws, req) {
   });
 });
 
+// ── Broadcast to all WS clients ─────────────────────────────────────────────
+function broadcastAll(msg) {
+  const str = JSON.stringify(msg);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) client.send(str);
+  });
+}
+
 // ── mDNS advertisement ───────────────────────────────────────────────────────
 let bonjourInstance = null;
 
@@ -409,7 +424,7 @@ function advertiseMdns() {
     const { Bonjour } = require('bonjour-service');
     bonjourInstance = new Bonjour();
     bonjourInstance.publish({
-      name: DEVICE_NAME,
+      name: deviceName,
       type: 'nofuntv',
       port: PORT,
       txt: {
@@ -419,18 +434,23 @@ function advertiseMdns() {
         ws:      'true',
       },
     });
-    console.log('[mdns] advertising _nofuntv._tcp "' + DEVICE_NAME + '" on port ' + PORT);
+    console.log('[mdns] advertising _nofuntv._tcp "' + deviceName + '" on port ' + PORT);
   } catch (e) {
     console.warn('[mdns] bonjour-service unavailable, trying avahi-publish…');
     try {
       spawn('avahi-publish', [
-        '-s', DEVICE_NAME, '_nofuntv._tcp', String(PORT),
+        '-s', deviceName, '_nofuntv._tcp', String(PORT),
         'decoder=' + DEFAULT_DECODER, 'sink=' + DEFAULT_SINK, 'version=2', 'ws=true',
       ], { stdio: 'inherit' });
     } catch (_) {
       console.warn('[mdns] No mDNS publisher available — manual connection only');
     }
   }
+}
+
+function reAdvertiseMdns() {
+  if (bonjourInstance) { try { bonjourInstance.destroy(); } catch (_) {} bonjourInstance = null; }
+  advertiseMdns();
 }
 
 // ── Start ────────────────────────────────────────────────────────────────────

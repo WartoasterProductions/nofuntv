@@ -34,6 +34,10 @@ let termHistIdx      = -1;
     renderDeviceRoutingList();
     renderDeviceBadge();
   }
+
+  // Trigger a scan after 1.5 s so any already-advertising Pi gets picked up
+  // even if the mDNS response arrived before our browser was ready.
+  setTimeout(() => window.gst.discoveryScan(), 1500);
 })();
 
 // ── Resize handles ────────────────────────────────────────────────────────────
@@ -87,6 +91,8 @@ function setupTabs() {
       document.getElementById('pane-' + btn.dataset.tab).classList.add('active');
       if (btn.dataset.tab === 'terminal')
         setTimeout(() => document.getElementById('term-input').focus(), 50);
+      if (btn.dataset.tab === 'streams')
+        renderDeviceRoutingList();
     });
   });
 }

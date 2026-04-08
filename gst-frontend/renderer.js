@@ -447,7 +447,7 @@ function buildPipelineString(config, ips, port) {
 
   let src;
   if (srcType === 'file') {
-    src = 'filesrc location="' + (filePath || 'video.mp4') + '" ! decodebin ! videorate';
+    src = 'filesrc location="' + (filePath || 'video.mp4').replace(/\\/g, '/') + '" ! decodebin ! videorate';
   } else if (srcType === 'url') {
     src = 'urisourcebin uri="' + (srcUrl || 'rtsp://x/live') + '" ! decodebin ! videorate';
   } else if (srcType === 'rtsp') {
@@ -766,6 +766,21 @@ function setupSettings() {
     const bin = binInput.value.trim() || 'gst-launch-1.0';
     switchToTerminal('"' + bin + '" --version');
   });
+
+  const detectBtn = document.getElementById('cfg-gst-detect');
+  if (detectBtn) {
+    detectBtn.addEventListener('click', async () => {
+      binInput.value = '';
+      await autoDetectGstBin();
+      if (binInput.value) {
+        detectBtn.textContent = 'Detected!';
+        setTimeout(() => { detectBtn.textContent = 'Auto-detect'; }, 2000);
+      } else {
+        detectBtn.textContent = 'Not found';
+        setTimeout(() => { detectBtn.textContent = 'Auto-detect'; }, 2000);
+      }
+    });
+  }
   document.getElementById('diag-inspect-h264').addEventListener('click', () => {
     const bin = (binInput.value.trim() || 'gst-launch-1.0').replace('gst-launch-1.0','gst-inspect-1.0');
     switchToTerminal('"' + bin + '" | grep -i h264');
@@ -789,14 +804,37 @@ function saveSettings() {
   }));
 }
 
+const GST_WIN_PATHS = [
+  'C:\\Program Files\\gstreamer\\1.0\\msvc_x86_64\\bin\\gst-launch-1.0.exe',
+  'C:\\gstreamer\\1.0\\msvc_x86_64\\bin\\gst-launch-1.0.exe',
+];
+
 function restoreSettings() {
   try {
     const raw = localStorage.getItem('nofun-gst-v2');
-    if (!raw) return;
-    const s = JSON.parse(raw);
-    if (s.gstBin)   document.getElementById('cfg-gst-bin').value    = s.gstBin;
-    if (s.basePort) document.getElementById('cfg-base-port').value  = s.basePort;
+    const s   = raw ? JSON.parse(raw) : {};
+    if (s.gstBin)   document.getElementById('cfg-gst-bin').value   = s.gstBin;
+    if (s.basePort) document.getElementById('cfg-base-port').value = s.basePort;
+    // Auto-fill on Windows if no binary is saved yet
+    if (!s.gstBin && PLATFORM === 'win32') {
+      autoDetectGstBin();
+    }
   } catch (_) {}
+}
+
+async function autoDetectGstBin() {
+  const input = document.getElementById('cfg-gst-bin');
+  if (input.value.trim()) return; // already set
+  for (const p of GST_WIN_PATHS) {
+    try {
+      const exists = await window.gst.fileExists(p);
+      if (exists) {
+        input.value = p;
+        saveSettings();
+        return;
+      }
+    } catch (_) {}
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

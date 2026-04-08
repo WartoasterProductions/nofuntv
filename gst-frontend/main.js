@@ -329,7 +329,7 @@ function buildRtspSenderPipeline(config) {
   const tune      = config.tune      || 'zerolatency';
   const platform  = config.platform  || os.platform();
   let src;
-  if (srcType === 'file') { src = 'filesrc location="' + filePath.replace(/"/g, '\\"') + '" ! decodebin ! videorate'; }
+  if (srcType === 'file') { src = 'filesrc location="' + filePath.replace(/\\/g, '/').replace(/"/g, '\\"') + '" ! decodebin ! videorate'; }
   else if (srcType === 'url')    { src = 'urisourcebin uri="' + srcUrl + '" ! decodebin ! videorate'; }
   else if (srcType === 'screen') { src = platform === 'win32' ? 'd3d11screencapturesrc monitor-index=' + screenIdx : 'ximagesrc use-damage=false display-name=:0'; }
   else if (srcType === 'webcam') { src = platform === 'win32' ? 'ksvideosrc device-index=' + webcam : 'v4l2src device=' + webcam; }
@@ -362,7 +362,7 @@ function buildSenderPipeline(config, deviceIps, port) {
 
   let src;
   if (srcType === 'file') {
-    src = 'filesrc location="' + filePath.replace(/"/g, '\\"') + '" ! decodebin ! videorate';
+    src = 'filesrc location="' + filePath.replace(/\\/g, '/').replace(/"/g, '\\"') + '" ! decodebin ! videorate';
   } else if (srcType === 'url') {
     src = 'urisourcebin uri="' + srcUrl + '" ! decodebin ! videorate';
   } else if (srcType === 'rtsp') {
@@ -544,6 +544,10 @@ ipcMain.handle('run-command', (_, cmdline) => {
 ipcMain.handle('kill-term', () => {
   if (termProc) { try { termProc.kill(); } catch (_) {} termProc = null; }
   return { ok: true };
+});
+
+ipcMain.handle('file-exists', (_, filePath) => {
+  try { require('fs').accessSync(filePath); return true; } catch (_) { return false; }
 });
 
 // ─── gst-inspect ─────────────────────────────────────────────────────────────

@@ -80,7 +80,7 @@
                   <label><input type="radio" name="es-src-type" value="rtsp">   RTSP</label>
                   <label><input type="radio" name="es-src-type" value="webcam"> Webcam</label>
                 </div>
-                <div id="es-src-file-row"   class="src-row"><button class="btn ghost small" id="es-btn-browse">Browse…</button><span id="es-file-display" class="path-display">no file</span></div>
+                <div id="es-src-file-row"   class="src-row"><button class="btn ghost small" id="es-btn-browse">Browse…</button><span id="es-file-display" class="path-display">no file</span><label class="loop-label"><input type="checkbox" id="es-loop" checked> Loop</label></div>
                 <div id="es-src-url-row"    class="src-row hidden"><input class="text-input" id="es-src-url" type="text" placeholder="http://host/stream.m3u8"></div>
                 <div id="es-src-rtsp-row"   class="src-row hidden"><input class="text-input" id="es-src-rtsp-url" type="text" placeholder="rtsp://192.168.1.x:554/live"><p class="field-hint">RTSP pull — devices will fetch this stream directly (no re-encode on sender)</p></div>
                 <div id="es-src-webcam-row" class="src-row hidden"><input class="text-input" id="es-webcam-dev" type="text" placeholder="/dev/video0 or 0"></div>
@@ -295,9 +295,12 @@
         <section class="ctrl-section">
           <h3 class="section-title">GSTREAMER BINARY</h3>
           <label class="field-label">gst-launch-1.0 path</label>
-          <input class="text-input" id="cfg-gst-bin" type="text" placeholder="gst-launch-1.0">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input class="text-input" id="cfg-gst-bin" type="text" placeholder="gst-launch-1.0" style="flex:1">
+            <button class="btn-small" id="cfg-gst-detect">Auto-detect</button>
+          </div>
           <div class="hint">Leave blank to use system PATH.<br>
-            Windows: <code>C:\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe</code></div>
+            Windows: <code>C:\Program Files\gstreamer\1.0\msvc_x86_64\bin\gst-launch-1.0.exe</code></div>
         </section>
       </div>
 

@@ -512,25 +512,43 @@ ipcMain.handle('stream-start', (_, opts) => {
   );
 
   const binary = gstBin || 'gst-launch-1.0';
-  const proc   = spawn('"' + binary + '" -e ' + pipeline, [], { shell: true, windowsHide: true });
+
+  // Spawn gst-launch and wire up event handlers. Calls itself on clean EOS when loop is enabled.
+  function spawnSender() {
+    const s = senderStreams.get(streamId);
+    if (!s) return;
+
+    const proc = spawn('"' + binary + '" -e ' + pipeline, [], { shell: true, windowsHide: true });
+    s.proc = proc;
+
+    proc.stdout.on('data', (d) =>
+      send('stream-output', { streamId, type: 'out', data: d.toString() }));
+    proc.stderr.on('data', (d) =>
+      send('stream-output', { streamId, type: 'err', data: d.toString() }));
+    proc.on('error', (e) =>
+      send('stream-output', { streamId, type: 'sys', data: '[error] ' + e.message + '\n' }));
+    proc.on('close', (code) => {
+      const cur = senderStreams.get(streamId);
+      if (cur) cur.proc = null;
+
+      // Auto-restart for file/url sources when loop is enabled and exit was clean (EOS)
+      const shouldLoop = (config.srcType === 'file' || config.srcType === 'url')
+                       && config.loop !== false && code === 0 && cur;
+      if (shouldLoop) {
+        send('stream-output', { streamId, type: 'sys', data: '[loop] restarting playback…\n' });
+        setTimeout(spawnSender, 500);
+      } else {
+        send('stream-output', { streamId, type: 'sys', data: '[exit ' + code + ']\n' });
+        send('stream-stopped', { streamId });
+      }
+    });
+  }
 
   senderStreams.set(streamId, {
-    proc, port, config, pipeline,
+    proc: null, port, config, pipeline,
     assignedDevices: new Set(deviceIds),
   });
-
-  proc.stdout.on('data', (d) =>
-    send('stream-output', { streamId, type: 'out', data: d.toString() }));
-  proc.stderr.on('data', (d) =>
-    send('stream-output', { streamId, type: 'err', data: d.toString() }));
-  proc.on('error', (e) =>
-    send('stream-output', { streamId, type: 'sys', data: '[error] ' + e.message + '\n' }));
-  proc.on('close', (code) => {
-    send('stream-output', { streamId, type: 'sys', data: '[exit ' + code + ']\n' });
-    send('stream-stopped', { streamId });
-    const s = senderStreams.get(streamId);
-    if (s) s.proc = null;
-  });
+  spawnSender();
 
   // Tell each assigned device to start its RTP/SRT receiver
   for (const dev of devices) {

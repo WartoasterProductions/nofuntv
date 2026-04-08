@@ -175,6 +175,7 @@ function defaultConfig() {
     srcType:   'screen',
     filePath:  '',
     srcUrl:    '',
+    loop:      true,
     webcam:    '/dev/video0',
     screenIdx: 0,
     width:     1280,
@@ -244,7 +245,7 @@ function setupStreamEditor() {
 
   // All simple inputs
   ['es-src-url','es-src-rtsp-url','es-webcam-dev','es-screen-idx','es-fps','es-codec','es-preset','es-tune',
-   'es-width','es-height','es-proto'].forEach((id) => {
+   'es-width','es-height','es-proto','es-loop'].forEach((id) => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener('input',  rebuildPipeline);
@@ -334,6 +335,7 @@ function populateEditorFromStream(stream) {
   if (radio) { radio.checked = true; showSrcRow(c.srcType); }
 
   document.getElementById('es-file-display').textContent = stream.filePath || 'no file';
+  document.getElementById('es-loop').checked        = c.loop !== false;
   document.getElementById('es-src-url').value      = c.srcType !== 'rtsp' ? (c.srcUrl || '') : '';
   const rtspInput = document.getElementById('es-src-rtsp-url');
   if (rtspInput) rtspInput.value = c.srcType === 'rtsp' ? (c.srcUrl || '') : '';
@@ -388,6 +390,7 @@ function readEditorConfig() {
   const config = {
     srcType,
     filePath:  stream.filePath || '',
+    loop:      document.getElementById('es-loop').checked,
     srcUrl:    srcUrlVal,
     webcam:    document.getElementById('es-webcam-dev').value.trim() || '/dev/video0',
     screenIdx: Number(document.getElementById('es-screen-idx').value) || 0,

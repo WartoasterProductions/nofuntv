@@ -67,6 +67,7 @@ ipcMain.handle('open-file', async () => {
 // ─── Device discovery ─────────────────────────────────────────────────────────
 
 const http = require('http');
+const dns  = require('dns');
 const fs   = require('fs');
 
 const discoveredDevices = new Map(); // id → device info
@@ -85,7 +86,9 @@ const KNOWN_INTERVAL_MS  = 5000;   // re-probe known IPs every 5 s
 function loadKnownDevices() {
   try {
     const raw = fs.readFileSync(KNOWN_DEVICES_FILE, 'utf8');
-    return JSON.parse(raw);   // [ { ip, port, name }, … ]
+    const list = JSON.parse(raw);   // [ { ip, port, name }, … ]
+    // Filter out any entries with non-IPv4 addresses (e.g. hostnames from old bugs)
+    return list.filter((d) => isIPv4(d.ip));
   } catch (_) { return []; }
 }
 
@@ -118,8 +121,15 @@ function probeDevice(ip, port, timeoutMs) {
   });
 }
 
+// Quick IPv4 check — rejects hostnames, IPv6, garbage.
+function isIPv4(str) { return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(str); }
+
 // Register a device found by any means (subnet scan or mDNS).
 function registerDevice(ip, port, info) {
+  if (!isIPv4(ip)) {
+    console.warn('[discovery] rejected non-IPv4 address: ' + ip);
+    return;
+  }
   const id = ip + ':' + port;
   if (discoveredDevices.has(id)) {
     // Already known — just make sure we're connected
@@ -197,13 +207,26 @@ function startMdnsBrowser() {
     const { Bonjour } = require('bonjour-service');
     bonjourInstance = new Bonjour();
     bonjourBrowser  = bonjourInstance.find({ type: 'nofuntv' }, (service) => {
-      const ip = (service.addresses || []).find((a) => !a.includes(':')) || service.host;
-      registerDevice(ip, service.port, {
+      const ip = (service.addresses || []).find((a) => isIPv4(a));
+      const info = {
         device:  service.name,
         decoder: service.txt && service.txt.decoder,
         sink:    service.txt && service.txt.sink,
-      });
-      send('device-update', serializeDevices());
+      };
+      if (ip) {
+        registerDevice(ip, service.port, info);
+        send('device-update', serializeDevices());
+      } else {
+        // No IPv4 in addresses — resolve the hostname
+        dns.lookup(service.host, { family: 4 }, (err, address) => {
+          if (!err && address && isIPv4(address)) {
+            registerDevice(address, service.port, info);
+            send('device-update', serializeDevices());
+          } else {
+            console.warn('[discovery] mDNS service "' + service.name + '" has no resolvable IPv4 (host=' + service.host + ')');
+          }
+        });
+      }
     });
     console.log('[discovery] mDNS browser started (_nofuntv._tcp)');
   } catch (e) {
@@ -378,7 +401,7 @@ function buildRtspSenderPipeline(config) {
   const height    = config.height    || 720;
   const fps       = config.fps       || 30;
   const codec     = config.codec     || 'x264enc';
-  const bitrate   = config.bitrate   || 4000;
+  const bitrate   = config.bitrate   || 2500;
   const keyframe  = config.keyframe  || 30;
   const preset    = config.preset    || 'ultrafast';
   const tune      = config.tune      || 'zerolatency';
@@ -395,8 +418,8 @@ function buildRtspSenderPipeline(config) {
   if (codec === 'nvh264enc')      { enc = 'nvh264enc zerolatency=true rc-mode=cbr bitrate=' + bitrate + ' gop-size=' + keyframe; }
   else if (codec === 'vaapih264enc') { enc = 'vaapih264enc rate-control=cbr bitrate=' + bitrate + ' keyframe-period=' + keyframe; }
   else if (codec === 'mfh264enc') { enc = 'mfh264enc rc-mode=cbr bitrate=' + bitrate + ' gop-size=' + keyframe; }
-  else { enc = 'x264enc tune=' + tune + ' speed-preset=' + preset + ' bitrate=' + bitrate + ' key-int-max=' + keyframe + ' byte-stream=true'; }
-  return '( ' + [src, caps, scale, enc, 'video/x-h264,profile=baseline', 'rtph264pay name=pay0 pt=96 config-interval=1'].join(' ! ') + ' )';
+  else { enc = 'x264enc tune=' + tune + ' speed-preset=' + preset + ' bitrate=' + bitrate + ' key-int-max=' + keyframe + ' sliced-threads=true intra-refresh=true vbv-buf-capacity=' + Math.round(bitrate * 0.5) + ' byte-stream=true'; }
+  return '( ' + [src, caps, scale, enc, 'video/x-h264,profile=baseline', 'rtph264pay name=pay0 pt=96 config-interval=1 mtu=1200'].join(' ! ') + ' )';
 }
 function buildSenderPipeline(config, deviceIps, port) {
   const srcType   = config.srcType   || 'screen';
@@ -408,7 +431,7 @@ function buildSenderPipeline(config, deviceIps, port) {
   const height    = config.height    || 720;
   const fps       = config.fps       || 30;
   const codec     = config.codec     || 'x264enc';
-  const bitrate   = config.bitrate   || 4000;
+  const bitrate   = config.bitrate   || 2500;
   const keyframe  = config.keyframe  || 30;
   const preset    = config.preset    || 'ultrafast';
   const tune      = config.tune      || 'zerolatency';
@@ -447,11 +470,14 @@ function buildSenderPipeline(config, deviceIps, port) {
     enc = 'mfh264enc rc-mode=cbr bitrate=' + bitrate + ' gop-size=' + keyframe;
   } else {
     enc = 'x264enc tune=' + tune + ' speed-preset=' + preset
-        + ' bitrate=' + bitrate + ' key-int-max=' + keyframe + ' byte-stream=true';
+        + ' bitrate=' + bitrate + ' key-int-max=' + keyframe
+        + ' sliced-threads=true intra-refresh=true'
+        + ' vbv-buf-capacity=' + Math.round(bitrate * 0.5)
+        + ' byte-stream=true';
   }
 
   const profile = 'video/x-h264,profile=baseline';
-  const pay     = 'rtph264pay config-interval=1 pt=96';
+  const pay     = 'rtph264pay config-interval=1 pt=96 mtu=1200';
 
   let sink;
   if (proto === 'srt') {
@@ -557,7 +583,7 @@ ipcMain.handle('stream-start', (_, opts) => {
       type:     'start',
       streamId,
       port,
-      jitter:   config.jitter  || 50,
+      jitter:   config.jitter  || 200,
       decoder:  overrides.decoder || dev.decoder,
       sink:     overrides.sink    || dev.sink,
       proto:    config.proto   || 'udp',

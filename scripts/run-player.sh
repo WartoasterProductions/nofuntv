@@ -25,7 +25,7 @@ PLACEHOLDER_DURATION="${PLACEHOLDER_DURATION:-5}"
 RTSP_LATENCY="${RTSP_LATENCY:-200}"
 RTSP_PROTOCOLS="${RTSP_PROTOCOLS:-udp+tcp}"
 RETRY_DELAY="${RETRY_DELAY:-3}"
-RTP_JITTER="${RTP_JITTER:-50}"
+RTP_JITTER="${RTP_JITTER:-200}"
 RTP_CAPS="application/x-rtp,media=video,encoding-name=H264,payload=96"
 
 # ── Auto-detect best hardware decoder ────────────────────────────────────────
@@ -143,20 +143,24 @@ read_stream_url() {
 
 get_device_ip() {
   local ip=""
+  # Try hostname -I first (space-separated list of IPs)
   if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
     ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   fi
 
+  # Fallback: ip route
   if [[ -z "$ip" ]] && command -v ip >/dev/null 2>&1; then
     ip="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src"){print $(i+1); exit}}')"
   fi
 
-  if [[ -z "$ip" ]] && command -v hostname >/dev/null 2>&1; then
-    ip="$(hostname 2>/dev/null || true)"
+  # Fallback: parse ip addr for first non-loopback IPv4
+  if [[ -z "$ip" ]] && command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{gsub(/\/.*/, "", $2); print $2; exit}')"
   fi
 
-  if [[ -z "$ip" ]]; then
-    ip="unknown"
+  # Validate: must look like an IPv4 address (not a hostname)
+  if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    ip="waiting for network…"
   fi
 
   echo "$ip"
@@ -173,8 +177,9 @@ start_stream() {
     rtp_port=${rtp_port:-5000}
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
     gst-launch-1.0 -e \
-      udpsrc port="$rtp_port" caps="$RTP_CAPS" ! \
-      rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! \
+      udpsrc port="$rtp_port" caps="$RTP_CAPS" \
+        buffer-size=2097152 ! \
+      rtpjitterbuffer latency="$RTP_JITTER" ! \
       rtph264depay ! h264parse ! \
       $DECODER ! videoconvert ! $VIDEO_SINK \
       2>/dev/null &

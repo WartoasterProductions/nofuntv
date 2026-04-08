@@ -278,6 +278,58 @@ stop_unavailable_placeholder() {
   fi
 }
 
+# ── Listening placeholder: test pattern + "LISTENING FOR STREAM" text ─────────
+LISTENING_PLACEHOLDER_PID=""
+
+start_listening_placeholder() {
+  local url="$1"
+  local ip line1 line2
+  ip="$(get_device_ip)"
+  line1="LISTENING FOR STREAM AT ${url}"
+  line2="${ip}"
+
+  stop_listening_placeholder
+
+  echo "[player] listening placeholder: ${line1} (${line2})" >&2
+
+  gst-launch-1.0 -e \
+    videotestsrc pattern=smpte ! video/x-raw,framerate=30/1 ! \
+    textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=-40 shaded-background=true ! \
+    textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=40 shaded-background=true ! \
+    videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+    videoconvert ! $VIDEO_SINK \
+    2>/dev/null &
+  LISTENING_PLACEHOLDER_PID=$!
+  sleep 1
+  if ! kill -0 "$LISTENING_PLACEHOLDER_PID" >/dev/null 2>&1; then
+    echo "[player] listening placeholder pipeline failed; trying without videotestsrc" >&2
+    gst-launch-1.0 -e \
+      videotestsrc pattern=black ! video/x-raw,framerate=30/1 ! \
+      textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
+        halignment=center valignment=center deltay=-40 shaded-background=true ! \
+      textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
+        halignment=center valignment=center deltay=40 shaded-background=true ! \
+      videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+      videoconvert ! $VIDEO_SINK \
+      2>/dev/null &
+    LISTENING_PLACEHOLDER_PID=$!
+  fi
+}
+
+stop_listening_placeholder() {
+  if [[ -n "${LISTENING_PLACEHOLDER_PID:-}" ]]; then
+    kill "$LISTENING_PLACEHOLDER_PID" >/dev/null 2>&1 || true
+    wait "$LISTENING_PLACEHOLDER_PID" 2>/dev/null || true
+    LISTENING_PLACEHOLDER_PID=""
+  fi
+}
+
+is_push_receive_url() {
+  [[ "$1" =~ ^rtp:// ]] || [[ "$1" =~ ^srt:// ]]
+}
+
 while true; do
   export CONFIG_FILE
   echo "[player] env DISPLAY=${DISPLAY:-<unset>} XAUTHORITY=${XAUTHORITY:-<unset>} VIDEO_SINK=$VIDEO_SINK" >&2
@@ -317,7 +369,15 @@ while true; do
   fi
 
   stop_unavailable_placeholder
+  stop_listening_placeholder
   echo "[player] starting stream: $STREAM_URL" >&2
+
+  # For push-receive streams (rtp://, srt://), show a LISTENING placeholder
+  # behind the receiver.  When actual data arrives the receiver's waylandsink
+  # surface will render on top; when the receiver exits the placeholder stays.
+  if is_push_receive_url "$STREAM_URL"; then
+    start_listening_placeholder "$STREAM_URL"
+  fi
 
   while true; do
     start_stream "$STREAM_URL"
@@ -342,11 +402,20 @@ while true; do
 
     if [[ "$CONFIG_CHANGED" -eq 1 ]]; then
       stop_unavailable_placeholder
+      stop_listening_placeholder
       break
     fi
 
-    # Stream died unexpectedly; show static placeholder with device IP and retry
-    start_unavailable_placeholder
+    # Stream died unexpectedly — for push-receive show LISTENING, otherwise
+    # show the generic "stream unavailable" placeholder.
+    if is_push_receive_url "$STREAM_URL"; then
+      # Re-launch the listening placeholder if it died
+      if [[ -z "${LISTENING_PLACEHOLDER_PID:-}" ]] || ! kill -0 "$LISTENING_PLACEHOLDER_PID" 2>/dev/null; then
+        start_listening_placeholder "$STREAM_URL"
+      fi
+    else
+      start_unavailable_placeholder
+    fi
     sleep "$RETRY_DELAY"
   done
 

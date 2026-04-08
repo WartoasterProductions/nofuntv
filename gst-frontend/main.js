@@ -67,11 +67,34 @@ ipcMain.handle('open-file', async () => {
 // ─── Device discovery ─────────────────────────────────────────────────────────
 
 const http = require('http');
+const fs   = require('fs');
 
 const discoveredDevices = new Map(); // id → device info
 let bonjourBrowser  = null;
 let bonjourInstance = null;
 let subnetScanTimer = null;
+let knownDeviceTimer = null;
+
+const KNOWN_DEVICES_FILE = path.join(app.getPath('userData'), 'known-devices.json');
+const SUBNET_TIMEOUT_MS  = 1500;   // generous for WiFi Pis
+const KNOWN_TIMEOUT_MS   = 2000;   // even more generous for known IPs
+const SUBNET_INTERVAL_MS = 15000;  // full subnet scan every 15 s
+const KNOWN_INTERVAL_MS  = 5000;   // re-probe known IPs every 5 s
+
+// ── Persistent known-device store ─────────────────────────────────────────────
+function loadKnownDevices() {
+  try {
+    const raw = fs.readFileSync(KNOWN_DEVICES_FILE, 'utf8');
+    return JSON.parse(raw);   // [ { ip, port, name }, … ]
+  } catch (_) { return []; }
+}
+
+function saveKnownDevices() {
+  const list = Array.from(discoveredDevices.values()).map((d) => ({
+    ip: d.ip, port: d.port, name: d.name,
+  }));
+  try { fs.writeFileSync(KNOWN_DEVICES_FILE, JSON.stringify(list, null, 2)); } catch (_) {}
+}
 
 // Probe a single IP:port for /api/health. Resolves with health JSON or null.
 function probeDevice(ip, port, timeoutMs) {
@@ -115,10 +138,29 @@ function registerDevice(ip, port, info) {
   };
   discoveredDevices.set(id, dev);
   console.log('[discovery] found "' + dev.name + '" at ' + id);
+  saveKnownDevices();
   connectToDevice(id, dev);
 }
 
-// Scan every host on all local /24 subnets in parallel (400 ms timeout per host).
+// Probe a list of known IPs quickly (targeted, not a full subnet sweep).
+async function probeKnownDevices() {
+  const known = loadKnownDevices();
+  // Also include any devices currently registered but disconnected
+  for (const dev of discoveredDevices.values()) {
+    if (!known.find((k) => k.ip === dev.ip && k.port === dev.port))
+      known.push({ ip: dev.ip, port: dev.port });
+  }
+  if (known.length === 0) return;
+  const probes = known.map((k) =>
+    probeDevice(k.ip, k.port, KNOWN_TIMEOUT_MS).then((health) => {
+      if (health) registerDevice(k.ip, k.port, health);
+    })
+  );
+  await Promise.all(probes);
+  send('device-update', serializeDevices());
+}
+
+// Scan every host on all local /24 subnets in parallel.
 async function scanSubnet() {
   const nets    = os.networkInterfaces();
   const subnets = new Set();
@@ -137,7 +179,7 @@ async function scanSubnet() {
     for (let i = 1; i <= 254; i++) {
       const ip = prefix + i;
       probes.push(
-        probeDevice(ip, 80, 400).then((health) => {
+        probeDevice(ip, 80, SUBNET_TIMEOUT_MS).then((health) => {
           if (health) registerDevice(ip, 80, health);
         })
       );
@@ -171,10 +213,20 @@ function startMdnsBrowser() {
 
 function startDiscovery() {
   startMdnsBrowser();
-  scanSubnet();
-  // Re-scan every 30 s to catch devices that appear after boot
+
+  // Immediately probe any previously-known devices (fast, targeted)
+  probeKnownDevices();
+
+  // Full subnet scan shortly after
+  setTimeout(scanSubnet, 500);
+
+  // Re-probe known devices every 5 s (cheap — only a few HTTP requests)
+  if (!knownDeviceTimer) {
+    knownDeviceTimer = setInterval(probeKnownDevices, KNOWN_INTERVAL_MS);
+  }
+  // Full subnet scan every 15 s to find brand-new devices
   if (!subnetScanTimer) {
-    subnetScanTimer = setInterval(scanSubnet, 30000);
+    subnetScanTimer = setInterval(scanSubnet, SUBNET_INTERVAL_MS);
   }
 }
 
@@ -186,6 +238,8 @@ ipcMain.handle('discovery-start', () => {
 ipcMain.handle('discovery-scan', () => {
   // Ping already-connected devices immediately
   for (const [id] of deviceClients) wsSend(id, { type: 'status' });
+  // Probe known devices right away (very fast)
+  probeKnownDevices();
   // Run a fresh subnet scan right now
   scanSubnet();
   return { ok: true, devices: serializeDevices() };
@@ -248,6 +302,7 @@ function connectToDevice(id, info) {
     const dev = discoveredDevices.get(id) || {};
     dev.status = 'connected';
     discoveredDevices.set(id, dev);
+    saveKnownDevices();
     send('device-update', serializeDevices());
   });
 
@@ -563,8 +618,11 @@ ipcMain.handle('inspect-element', (_, opts) => {
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 function shutdown() {
+  if (subnetScanTimer) clearInterval(subnetScanTimer);
+  if (knownDeviceTimer) clearInterval(knownDeviceTimer);
   senderStreams.forEach((s) => { if (s.proc) try { s.proc.kill(); } catch (_) {} });
   if (termProc) try { termProc.kill(); } catch (_) {}
+  saveKnownDevices();
   deviceClients.forEach((_, id) => disconnectDevice(id));
   if (bonjourInstance) try { bonjourInstance.destroy(); } catch (_) {}
 }

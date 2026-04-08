@@ -160,10 +160,31 @@ get_device_ip() {
 
   # Validate: must look like an IPv4 address (not a hostname)
   if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    ip="waiting for network…"
+    ip=""
   fi
 
   echo "$ip"
+}
+
+# Block until we get a valid IPv4 address (max ~60 s)
+wait_for_ip() {
+  local ip="" attempts=0
+  while [[ $attempts -lt 30 ]]; do
+    ip="$(get_device_ip)"
+    if [[ -n "$ip" ]]; then
+      echo "$ip"
+      return 0
+    fi
+    echo "[player] waiting for network… (attempt $((attempts+1)))" >&2
+    sleep 2
+    attempts=$((attempts + 1))
+  done
+  # If we still have nothing, try ifconfig as last resort
+  if command -v ifconfig >/dev/null 2>&1; then
+    ip="$(ifconfig 2>/dev/null | awk '/inet / && !/127\.0\.0\.1/{gsub(/addr:/, "", $2); print $2; exit}')"
+    if [[ -n "$ip" ]]; then echo "$ip"; return 0; fi
+  fi
+  echo "?.?.?.?"
 }
 
 # Launch an appropriate pipeline for the URL type; sets CHILD_PID
@@ -265,7 +286,7 @@ UNAVAILABLE_PLACEHOLDER_PID=""
 
 start_unavailable_placeholder() {
   local ip msg
-  ip="$(get_device_ip)"
+  ip="$(wait_for_ip)"
   msg="stream unavailable ${ip}"
 
   if [[ -n "$UNAVAILABLE_PLACEHOLDER_PID" ]] && kill -0 "$UNAVAILABLE_PLACEHOLDER_PID" >/dev/null 2>&1; then
@@ -289,7 +310,7 @@ LISTENING_PLACEHOLDER_PID=""
 start_listening_placeholder() {
   local url="$1"
   local ip line1 line2
-  ip="$(get_device_ip)"
+  ip="$(wait_for_ip)"
   line1="LISTENING FOR STREAM AT ${url}"
   line2="${ip}"
 
@@ -344,7 +365,7 @@ while true; do
   echo "[player] using config: $CONFIG_FILE (sig: $CONFIG_SIG) url: ${STREAM_URL:-<empty>}" >&2
 
   if [[ -z "$STREAM_URL" ]]; then
-    IDLE_IP="$(get_device_ip)"
+    IDLE_IP="$(wait_for_ip)"
     PLACEHOLDER_PID="$(start_idle_placeholder "Select a stream @ ${IDLE_IP}")"
 
     # Wait here until a stream appears or the config file changes; keep the
@@ -366,7 +387,7 @@ while true; do
       fi
 
       if [[ -n "$PLACEHOLDER_PID" ]] && ! kill -0 "$PLACEHOLDER_PID" >/dev/null 2>&1; then
-        IDLE_IP="$(get_device_ip)"
+        IDLE_IP="$(wait_for_ip)"
         PLACEHOLDER_PID="$(start_idle_placeholder "Select a stream @ ${IDLE_IP}")"
       fi
     done

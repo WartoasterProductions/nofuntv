@@ -406,17 +406,37 @@ wss.on('connection', function (ws, req) {
         send({ type: 'pong', ts: Date.now() });
         break;
 
-      case 'start':
-        startReceiver(msg.streamId, msg, send);
+      case 'start': {
+        // Drive run-player.sh via stream-config.json — never spawn a separate pipeline.
+        // For UDP/SRT push: run-player.sh is already listening; just ack.
+        // For RTSP pull: save the URL and trigger run-player.sh to restart.
+        const proto = (msg.proto || 'udp').toLowerCase();
+        if (proto === 'rtsp' && msg.srcUrl) {
+          saveConfig({ mode: 'pull', streamUrl: msg.srcUrl, protocol: 'rtsp' });
+          if (RESTART_ON_SAVE) exec('"' + RESTART_CMD + '"', { cwd: __dirname }, function () {});
+          send({ type: 'ack', streamId: msg.streamId, status: 'starting', pipeline: 'rtsp-pull:' + msg.srcUrl });
+        } else {
+          // UDP/SRT push — receiver is already running inside run-player.sh
+          send({ type: 'ack', streamId: msg.streamId, status: 'started', pipeline: 'push-' + proto + ':' + (msg.port || 5000) });
+        }
         break;
+      }
 
-      case 'stop':
-        stopReceiver(msg.streamId, send);
-        break;
-
-      case 'stop-all':
+      case 'stop': {
+        // Return run-player.sh to idle push/listen mode
         stopAll(send);
+        saveConfig({ mode: 'push', streamUrl: '' });
+        if (RESTART_ON_SAVE) exec('"' + RESTART_CMD + '"', { cwd: __dirname }, function () {});
+        send({ type: 'ack', streamId: msg.streamId, status: 'stopped' });
         break;
+      }
+
+      case 'stop-all': {
+        stopAll(send);
+        saveConfig({ mode: 'push', streamUrl: '' });
+        if (RESTART_ON_SAVE) exec('"' + RESTART_CMD + '"', { cwd: __dirname }, function () {});
+        break;
+      }
 
       case 'status':
         send({

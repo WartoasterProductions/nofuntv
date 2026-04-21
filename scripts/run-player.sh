@@ -398,14 +398,18 @@ while true; do
   stop_listening_placeholder
   echo "[player] starting stream: $STREAM_URL" >&2
 
-  # For push-receive streams (rtp://, srt://), show a LISTENING placeholder
-  # behind the receiver.  When actual data arrives the receiver's waylandsink
-  # surface will render on top; when the receiver exits the placeholder stays.
-  if is_push_receive_url "$STREAM_URL"; then
-    start_listening_placeholder "$STREAM_URL"
-  fi
-
   while true; do
+    # For push-receive, show the listening placeholder only while truly idle.
+    # Kill it BEFORE starting the receiver so the receiver's waylandsink window
+    # can take fullscreen — if we leave it running alongside the receiver,
+    # the placeholder holds fullscreen and the video window never appears.
+    if is_push_receive_url "$STREAM_URL"; then
+      if [[ -z "${LISTENING_PLACEHOLDER_PID:-}" ]] || ! kill -0 "${LISTENING_PLACEHOLDER_PID:-}" 2>/dev/null; then
+        start_listening_placeholder "$STREAM_URL"
+      fi
+      stop_listening_placeholder
+    fi
+
     start_stream "$STREAM_URL"
     CONFIG_CHANGED=0
 

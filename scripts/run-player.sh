@@ -199,7 +199,7 @@ start_stream() {
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
     gst-launch-1.0 -e \
       udpsrc port="$rtp_port" caps="$RTP_CAPS" \
-        buffer-size=2097152 ! \
+        buffer-size=2097152 timeout=10000000000 ! \
       rtpjitterbuffer latency="$RTP_JITTER" ! \
       rtph264depay ! h264parse ! \
       $DECODER ! videoconvert ! $VIDEO_SINK \

@@ -70,14 +70,26 @@ function hasDrmAccess() {
 const DEFAULT_DECODER = process.env.DECODER || detect([
   'v4l2h264dec', 'mppvideodec', 'nvh264dec', 'avdec_h264',
 ]);
+function hasWaylandDisplay() {
+  // Check common Wayland socket locations even when WAYLAND_DISPLAY isn't set in PM2 env
+  const xdgRuntime = process.env.XDG_RUNTIME_DIR || ('/run/user/' + process.getuid());
+  const display    = process.env.WAYLAND_DISPLAY || 'wayland-0';
+  try { fs.accessSync(xdgRuntime + '/' + display); return true; } catch (_) {}
+  try { fs.accessSync('/run/user/1000/wayland-0'); return true; } catch (_) {}
+  return false;
+}
+
 const DEFAULT_SINK = process.env.SINK || (() => {
-  const candidates = ['kmssink', 'waylandsink', 'xvimagesink sync=false', 'autovideosink'];
+  // Prefer waylandsink on Wayland sessions — kmssink needs exclusive DRM plane access
+  // which fails at runtime even when the fd open succeeds (permission 13).
+  const candidates = hasWaylandDisplay()
+    ? ['waylandsink', 'xvimagesink sync=false', 'autovideosink']
+    : ['kmssink', 'waylandsink', 'xvimagesink sync=false', 'autovideosink'];
   for (const n of candidates) {
     try {
       execSync('gst-inspect-1.0 ' + n.split(' ')[0], { stdio: 'ignore' });
-      // kmssink requires direct DRM access — skip if we don't have it
       if (n === 'kmssink' && !hasDrmAccess()) {
-        console.warn('[server] kmssink detected but DRM access denied — skipping (add user to video/render groups)');
+        console.warn('[server] kmssink detected but DRM access denied — skipping');
         continue;
       }
       return n;
@@ -325,7 +337,13 @@ function startReceiver(streamId, opts, sendFn) {
   console.log('[agent] stream ' + streamId + ' starting: ' + GST_BIN + ' ' + args.join(' '));
   sendFn({ type: 'ack', streamId: streamId, status: 'starting', pipeline: pipeline });
 
-  const proc = spawn(GST_BIN, args, { shell: false });
+  const proc = spawn(GST_BIN, args, {
+    shell: false,
+    env: Object.assign({}, process.env, {
+      WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-0',
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR || ('/run/user/' + process.getuid()),
+    }),
+  });
   streamProcs.set(streamId, proc);
 
   proc.stdout.on('data', function (d) {

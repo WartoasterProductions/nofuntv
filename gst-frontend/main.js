@@ -581,6 +581,9 @@ ipcMain.handle('stream-start', (_, opts) => {
       } else {
         send('stream-output', { streamId, type: 'sys', data: '[exit ' + code + ']\n' });
         send('stream-stopped', { streamId });
+        // Tell Pi(s) to return to idle/color-bars mode
+        const cur2 = senderStreams.get(streamId);
+        if (cur2) cur2.assignedDevices.forEach((deviceId) => wsSend(deviceId, { type: 'stop', streamId }));
       }
     });
   }

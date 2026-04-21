@@ -233,6 +233,7 @@ function setupStreamEditor() {
       const stream = streams.get(selectedStreamId);
       if (stream) { stream.filePath = fp; stream.config.filePath = fp; }
       document.getElementById('es-file-display').textContent = fp;
+      setFilePreview(fp);
       rebuildPipeline();
     }
   });
@@ -308,6 +309,24 @@ function showSrcRow(type) {
     const el = document.getElementById('es-src-' + t + '-row');
     if (el) el.classList.toggle('hidden', t !== type);
   });
+  const prevRow = document.getElementById('es-file-preview-row');
+  if (prevRow) prevRow.classList.toggle('hidden', type !== 'file');
+}
+
+function setFilePreview(fp) {
+  const vid = document.getElementById('es-file-preview');
+  const row = document.getElementById('es-file-preview-row');
+  if (!vid) return;
+  if (fp) {
+    // Convert Windows backslashes; prepend file:// for Electron
+    const url = 'file:///' + fp.replace(/\\/g, '/');
+    vid.src = url;
+    vid.currentTime = 0;
+    if (row) row.classList.remove('hidden');
+  } else {
+    vid.src = '';
+    if (row) row.classList.add('hidden');
+  }
 }
 
 function selectStream(id) {
@@ -335,6 +354,7 @@ function populateEditorFromStream(stream) {
   if (radio) { radio.checked = true; showSrcRow(c.srcType); }
 
   document.getElementById('es-file-display').textContent = stream.filePath || 'no file';
+  setFilePreview(stream.filePath || '');
   document.getElementById('es-loop').checked        = c.loop !== false;
   document.getElementById('es-src-url').value      = c.srcType !== 'rtsp' ? (c.srcUrl || '') : '';
   const rtspInput = document.getElementById('es-src-rtsp-url');

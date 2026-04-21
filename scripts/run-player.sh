@@ -194,12 +194,12 @@ start_stream() {
   # ── RTP/UDP push receive (rtp://0.0.0.0:5000 or rtp://:5000) ──────────────
   if [[ "$url" =~ ^rtp:// ]]; then
     local rtp_port
-    rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
+    rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1 || true)
     rtp_port=${rtp_port:-5000}
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
     gst-launch-1.0 -e \
       udpsrc port="$rtp_port" caps="$RTP_CAPS" \
-        buffer-size=2097152 timeout=10000000000 ! \
+        buffer-size=2097152 timeout=0 ! \
       rtpjitterbuffer latency="$RTP_JITTER" ! \
       rtph264depay ! h264parse ! \
       $DECODER ! videoconvert ! $VIDEO_SINK \

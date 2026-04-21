@@ -66,11 +66,14 @@ if (-not $PI_IP) {
     exit 1
 }
 
-Write-Host "[stream] Sending $FILE -> rtp://${PI_IP}:${PORT}" -ForegroundColor Cyan
+Write-Host "[stream] Sending $FILE -> rtp://${PI_IP}:${PORT} (720x480 NTSC)" -ForegroundColor Cyan
 
 ffmpeg -re -stream_loop -1 -i $FILE `
     -an `
-    -c:v copy `
+    -vf "scale=720:480:force_original_aspect_ratio=decrease,pad=720:480:(ow-iw)/2:(oh-ih)/2,setsar=1" `
+    -c:v libx264 -preset ultrafast -tune zerolatency `
+    -b:v 1500k -maxrate 1500k -bufsize 3000k `
+    -g 30 -keyint_min 30 `
     -bsf:v h264_mp4toannexb `
     -payload_type 96 `
     -f rtp "rtp://${PI_IP}:${PORT}"

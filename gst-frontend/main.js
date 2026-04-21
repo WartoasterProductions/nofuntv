@@ -539,12 +539,27 @@ ipcMain.handle('stream-start', (_, opts) => {
 
   const binary = gstBin || 'gst-launch-1.0';
 
-  // Spawn gst-launch and wire up event handlers. Calls itself on clean EOS when loop is enabled.
+  // Spawn sender and wire up event handlers. Calls itself on clean EOS when loop is enabled.
+  // File sources use ffmpeg (scale to 720x480 NTSC, x264 ultrafast) instead of gst-launch.
   function spawnSender() {
     const s = senderStreams.get(streamId);
     if (!s) return;
 
-    const proc = spawn('"' + binary + '" -e ' + pipeline, [], { shell: true, windowsHide: true });
+    let proc;
+    if (config.srcType === 'file' && config.filePath) {
+      const fp = config.filePath.replace(/\\/g, '/').replace(/"/g, '\\"');
+      const dest = 'rtp://' + ips[0] + ':' + port;
+      const ffmpegCmd = 'ffmpeg -re -stream_loop -1 -i "' + fp + '"'
+        + ' -an'
+        + ' -vf "scale=720:480:force_original_aspect_ratio=decrease,pad=720:480:(ow-iw)/2:(oh-ih)/2,setsar=1"'
+        + ' -c:v libx264 -preset ultrafast -tune zerolatency'
+        + ' -b:v 1500k -maxrate 1500k -bufsize 3000k'
+        + ' -g 30 -keyint_min 30'
+        + ' -bsf:v h264_mp4toannexb -payload_type 96 -f rtp ' + dest;
+      proc = spawn(ffmpegCmd, [], { shell: true, windowsHide: true });
+    } else {
+      proc = spawn('"' + binary + '" -e ' + pipeline, [], { shell: true, windowsHide: true });
+    }
     s.proc = proc;
 
     proc.stdout.on('data', (d) =>

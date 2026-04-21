@@ -1,6 +1,6 @@
 {
   "streamUrl": "",
-  "mode": "pull",
+  "mode": "push",
   "protocol": "udp",
   "receivePort": 5000,
   "hostName": "",

@@ -25,7 +25,8 @@ fi
 # ── Pick the right video sink ────────────────────────────────────────────
 if [ "$IS_WAYLAND" -eq 1 ]; then
   # sync=false → never drop frames waiting for clock (critical on Pi 3B)
-  VIDEO_SINK=${VIDEO_SINK:-waylandsink sync=false}
+  # fullscreen=true → covers entire display, no desktop bleed-through
+  VIDEO_SINK=${VIDEO_SINK:-waylandsink sync=false fullscreen=true}
   # Fallback if waylandsink unavailable
   if ! gst-inspect-1.0 waylandsink >/dev/null 2>&1; then
     VIDEO_SINK="autovideosink sync=false"

@@ -77,7 +77,7 @@ start_idle_placeholder() {
 
   if [[ -z "$pid" ]]; then
     gst-launch-1.0 -e \
-      videotestsrc pattern=black ! video/x-raw,framerate=30/1 ! \
+      videotestsrc pattern=smpte ! video/x-raw,framerate=30/1 ! \
       textoverlay text="$message" font-desc="$OVERLAY_FONT" halignment=center valignment=center shaded-background=true \
       ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 \
       ! videoconvert ! $VIDEO_SINK \
@@ -194,15 +194,21 @@ start_stream() {
   # ── RTP/UDP push receive (rtp://0.0.0.0:5000 or rtp://:5000) ──────────────
   if [[ "$url" =~ ^rtp:// ]]; then
     local rtp_port
-    rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1 || true)
+    rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
     rtp_port=${rtp_port:-5000}
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
     gst-launch-1.0 -e \
-      udpsrc port="$rtp_port" caps="$RTP_CAPS" \
-        buffer-size=2097152 timeout=0 ! \
-      rtpjitterbuffer latency="$RTP_JITTER" ! \
-      rtph264depay ! h264parse ! \
-      $DECODER ! videoconvert ! $VIDEO_SINK \
+      compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
+      videoconvert ! $VIDEO_SINK \
+      videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
+      textoverlay text="LISTENING FOR STREAM AT ${url}" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=-40 shaded-background=true ! \
+      textoverlay text="$(wait_for_ip)" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=40 shaded-background=true ! \
+      videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+      comp.sink_0 \
+      udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=2097152 ! \
+      rtpjitterbuffer latency="$RTP_JITTER" ! rtph264depay ! h264parse ! \
+      $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+      comp.sink_1 \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -212,11 +218,17 @@ start_stream() {
   if [[ "$url" =~ ^srt:// ]]; then
     echo "[player] using SRT receiver: $url (decoder=$DECODER)" >&2
     gst-launch-1.0 -e \
-      srtsrc uri="$url" latency=120 \
-        caps="$RTP_CAPS" ! \
-      rtpjitterbuffer latency="$RTP_JITTER" ! \
-      rtph264depay ! h264parse ! \
-      $DECODER ! videoconvert ! $VIDEO_SINK \
+      compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
+      videoconvert ! $VIDEO_SINK \
+      videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
+      textoverlay text="LISTENING FOR STREAM AT ${url}" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=-40 shaded-background=true ! \
+      textoverlay text="$(wait_for_ip)" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=40 shaded-background=true ! \
+      videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+      comp.sink_0 \
+      srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
+      rtpjitterbuffer latency="$RTP_JITTER" ! rtph264depay ! h264parse ! \
+      $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+      comp.sink_1 \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -285,15 +297,28 @@ show_placeholder() {
 UNAVAILABLE_PLACEHOLDER_PID=""
 
 start_unavailable_placeholder() {
-  local ip msg
-  ip="$(wait_for_ip)"
-  msg="stream unavailable ${ip}"
-
-  if [[ -n "$UNAVAILABLE_PLACEHOLDER_PID" ]] && kill -0 "$UNAVAILABLE_PLACEHOLDER_PID" >/dev/null 2>&1; then
+  if [[ -n "${UNAVAILABLE_PLACEHOLDER_PID:-}" ]] && kill -0 "$UNAVAILABLE_PLACEHOLDER_PID" >/dev/null 2>&1; then
     return
   fi
 
-  UNAVAILABLE_PLACEHOLDER_PID="$(start_idle_placeholder "$msg")"
+  local ip line1 line2
+  ip="$(wait_for_ip)"
+  line1="STREAM UNAVAILABLE"
+  line2="${ip}"
+
+  stop_unavailable_placeholder
+  echo "[player] unavailable placeholder: ${line1} (${line2})" >&2
+
+  gst-launch-1.0 -e \
+    videotestsrc pattern=smpte ! video/x-raw,framerate=30/1 ! \
+    textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=-40 shaded-background=true ! \
+    textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=40 shaded-background=true ! \
+    videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
+    videoconvert ! $VIDEO_SINK \
+    2>/dev/null &
+  UNAVAILABLE_PLACEHOLDER_PID=$!
 }
 
 stop_unavailable_placeholder() {
@@ -399,17 +424,6 @@ while true; do
   echo "[player] starting stream: $STREAM_URL" >&2
 
   while true; do
-    # For push-receive, show the listening placeholder only while truly idle.
-    # Kill it BEFORE starting the receiver so the receiver's waylandsink window
-    # can take fullscreen — if we leave it running alongside the receiver,
-    # the placeholder holds fullscreen and the video window never appears.
-    if is_push_receive_url "$STREAM_URL"; then
-      if [[ -z "${LISTENING_PLACEHOLDER_PID:-}" ]] || ! kill -0 "${LISTENING_PLACEHOLDER_PID:-}" 2>/dev/null; then
-        start_listening_placeholder "$STREAM_URL"
-      fi
-      stop_listening_placeholder
-    fi
-
     start_stream "$STREAM_URL"
     CONFIG_CHANGED=0
 
@@ -439,10 +453,7 @@ while true; do
     # Stream died unexpectedly — for push-receive show LISTENING, otherwise
     # show the generic "stream unavailable" placeholder.
     if is_push_receive_url "$STREAM_URL"; then
-      # Re-launch the listening placeholder if it died
-      if [[ -z "${LISTENING_PLACEHOLDER_PID:-}" ]] || ! kill -0 "$LISTENING_PLACEHOLDER_PID" 2>/dev/null; then
-        start_listening_placeholder "$STREAM_URL"
-      fi
+      start_listening_placeholder "$STREAM_URL"
     else
       start_unavailable_placeholder
     fi

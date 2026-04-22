@@ -123,23 +123,23 @@ wait_for_config_event() {
 }
 
 config_sig() {
-  if command -v sha1sum >/dev/null 2>&1; then
-    sha1sum "$CONFIG_FILE" 2>/dev/null | awk '{print $1}' || echo "missing"
-    return
-  fi
-
-  node - <<'NODE' || true
+  # Hash only the fields that actually affect the pipeline; ignore updatedAt
+  # so a timestamp-only write doesn't cause a needless restart.
+  node -e "
     const fs = require('fs');
     const crypto = require('crypto');
     const p = process.env.CONFIG_FILE;
     try {
-      const b = fs.readFileSync(p);
-      const h = crypto.createHash('sha1').update(b).digest('hex');
-      console.log(h);
-    } catch (e) {
-      console.log('missing');
-    }
-NODE
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      const key = JSON.stringify({
+        mode: j.mode || '',
+        protocol: j.protocol || '',
+        receivePort: j.receivePort || '',
+        streamUrl: j.streamUrl || '',
+      });
+      console.log(crypto.createHash('sha1').update(key).digest('hex'));
+    } catch(e) { console.log('missing'); }
+  " 2>/dev/null || echo "missing"
 }
 
 read_stream_url() {
@@ -232,8 +232,9 @@ start_stream() {
       textoverlay text="$overlay" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=0 shaded-background=true ! \
       videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_0 \
-      udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=2097152 ! \
-      rtpjitterbuffer latency="$RTP_JITTER" ! rtph264depay ! h264parse ! \
+      udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=524288 ! \
+      rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
+      queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
       $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_1 \
       2>/dev/null &
@@ -256,7 +257,8 @@ start_stream() {
       videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_0 \
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
-      rtpjitterbuffer latency="$RTP_JITTER" ! rtph264depay ! h264parse ! \
+      rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
+      queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
       $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_1 \
       2>/dev/null &

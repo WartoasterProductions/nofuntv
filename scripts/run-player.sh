@@ -25,7 +25,7 @@ PLACEHOLDER_DURATION="${PLACEHOLDER_DURATION:-5}"
 RTSP_LATENCY="${RTSP_LATENCY:-200}"
 RTSP_PROTOCOLS="${RTSP_PROTOCOLS:-udp+tcp}"
 RETRY_DELAY="${RETRY_DELAY:-3}"
-RTP_JITTER="${RTP_JITTER:-200}"
+RTP_JITTER="${RTP_JITTER:-80}"
 RTP_CAPS="application/x-rtp,media=video,encoding-name=H264,payload=96"
 
 # ── Auto-detect best hardware decoder ────────────────────────────────────────
@@ -225,7 +225,7 @@ start_stream() {
       udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=524288 ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! videoconvert ! $VIDEO_SINK \
+      $DECODER ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -238,7 +238,7 @@ start_stream() {
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! videoconvert ! $VIDEO_SINK \
+      $DECODER ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return

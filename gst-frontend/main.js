@@ -35,6 +35,25 @@ function createWindow() {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
+// ─── Kill all senders on exit ────────────────────────────────────────────────
+function killAllSenders() {
+  for (const [, s] of senderStreams) {
+    if (s.proc) {
+      try {
+        if (os.platform() === 'win32')
+          exec('taskkill /pid ' + s.proc.pid + ' /f /t', () => {});
+        else
+          s.proc.kill('SIGTERM');
+      } catch (_) {}
+      s.proc = null;
+    }
+  }
+  senderStreams.clear();
+}
+
+app.on('before-quit', killAllSenders);
+process.on('exit',    killAllSenders);
+
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { shutdown(); app.quit(); });
 
@@ -541,24 +560,30 @@ ipcMain.handle('stream-start', (_, opts) => {
 
   // Spawn sender and wire up event handlers. Calls itself on clean EOS when loop is enabled.
   // File sources use ffmpeg (scale to 720x480 NTSC, x264 ultrafast) instead of gst-launch.
+  // NOTE: We do NOT use shell:true so that the child is a direct Electron child process.
+  // On Windows this means the OS job object kills ffmpeg/gst-launch when Electron dies.
   function spawnSender() {
     const s = senderStreams.get(streamId);
     if (!s) return;
 
     let proc;
     if (config.srcType === 'file' && config.filePath) {
-      const fp = config.filePath.replace(/\\/g, '/').replace(/"/g, '\\"');
+      const fp   = config.filePath;
       const dest = 'rtp://' + ips[0] + ':' + port;
-      const ffmpegCmd = 'ffmpeg -re -stream_loop -1 -i "' + fp + '"'
-        + ' -an'
-        + ' -vf "scale=720:480:force_original_aspect_ratio=decrease,pad=720:480:(ow-iw)/2:(oh-ih)/2,setsar=1"'
-        + ' -c:v libx264 -preset ultrafast -tune zerolatency'
-        + ' -b:v 1500k -maxrate 1500k -bufsize 3000k'
-        + ' -g 30 -keyint_min 30'
-        + ' -bsf:v h264_mp4toannexb -payload_type 96 -f rtp ' + dest;
-      proc = spawn(ffmpegCmd, [], { shell: true, windowsHide: true });
+      const ffArgs = [
+        '-re', '-stream_loop', '-1', '-i', fp,
+        '-an',
+        '-vf', 'scale=720:480:force_original_aspect_ratio=decrease,pad=720:480:(ow-iw)/2:(oh-ih)/2,setsar=1',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+        '-b:v', '1500k', '-maxrate', '1500k', '-bufsize', '3000k',
+        '-g', '30', '-keyint_min', '30',
+        '-bsf:v', 'h264_mp4toannexb', '-payload_type', '96', '-f', 'rtp', dest,
+      ];
+      proc = spawn('ffmpeg', ffArgs, { windowsHide: true });
     } else {
-      proc = spawn('"' + binary + '" -e ' + pipeline, [], { shell: true, windowsHide: true });
+      // Split pipeline string into args for direct spawn (no shell)
+      const gstArgs = ['-e', ...pipeline.split(/\s+/).filter(Boolean)];
+      proc = spawn(binary, gstArgs, { windowsHide: true });
     }
     s.proc = proc;
 
@@ -610,7 +635,8 @@ ipcMain.handle('stream-start', (_, opts) => {
     });
   }
 
-  return { ok: true, pid: proc.pid, port, pipeline };
+  const started = senderStreams.get(streamId);
+  return { ok: true, pid: started && started.proc ? started.proc.pid : null, port, pipeline };
 });
 
 ipcMain.handle('stream-stop', (_, opts) => {

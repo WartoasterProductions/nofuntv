@@ -74,4 +74,11 @@ disable_screensaver() {
 wait_for_display
 disable_screensaver
 
+# Ensure no stale player or pipeline processes hold the video sink before
+# handing control to run-player.sh.  run-player.sh will then take the flock
+# and own the display exclusively.
+pkill -f 'run-player.sh' >/dev/null 2>&1 || true
+pkill -f 'gst-launch-1.0' >/dev/null 2>&1 || true
+sleep 1
+
 exec "$(dirname "$0")/run-player.sh"

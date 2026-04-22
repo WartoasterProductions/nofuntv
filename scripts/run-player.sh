@@ -45,6 +45,30 @@ if command -v inotifywait >/dev/null 2>&1; then
   HAS_INOTIFY=1
 fi
 
+# ── Single-instance lock ─────────────────────────────────────────────────────
+# Exactly one player process may hold the display at a time.
+# A second invocation (e.g. from a stale boot + manual restart) exits
+# immediately; the OS releases the flock even on SIGKILL.
+LOCKFILE="/tmp/nofuntv-player.lock"
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+  echo "[player] another instance already holds the lock — exiting" >&2
+  exit 0
+fi
+
+_player_cleanup() {
+  # Kill every gst-launch process this shell spawned, then release the lock.
+  kill $(jobs -p) 2>/dev/null || true
+  flock -u 9
+  rm -f "$LOCKFILE"
+}
+trap '_player_cleanup' EXIT INT TERM
+
+# Kill any gst-launch left over from a previous (now-dead) instance before we
+# claim the video sink for ourselves.
+pkill -f 'gst-launch-1.0' >/dev/null 2>&1 || true
+sleep 0.5
+
 # If the chosen sink is unavailable, fall back to autovideosink so we at least render.
 if ! gst-inspect-1.0 "${VIDEO_SINK%% *}" >/dev/null 2>&1; then
   echo "[player] sink ${VIDEO_SINK%% *} not found; falling back to autovideosink" >&2
@@ -458,6 +482,11 @@ while true; do
       start_unavailable_placeholder
     fi
     sleep "$RETRY_DELAY"
+    # Kill the placeholder BEFORE retrying start_stream — otherwise both
+    # compete for the video sink and the compositor loses, causing an
+    # infinite "listening" loop.
+    stop_listening_placeholder
+    stop_unavailable_placeholder
   done
 
 done

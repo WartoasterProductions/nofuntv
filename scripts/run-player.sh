@@ -421,6 +421,47 @@ stop_stream_watchdog() {
   fi
 }
 
+# Probe for incoming UDP traffic on PORT without holding the socket open.
+# Uses Python3 with SO_REUSEADDR so it can briefly bind the same port.
+# Returns 0 the moment a packet arrives, 1 on config change.
+wait_for_udp_data() {
+  local port="$1"
+  echo "[player] waiting for UDP traffic on port $port..." >&2
+  while true; do
+    # 2-second probe — exits 0 if a packet arrives, 1 on timeout
+    if python3 - <<PYEOF 2>/dev/null
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('', $port))
+except OSError:
+    sys.exit(1)
+s.settimeout(2.0)
+try:
+    s.recvfrom(16)
+    sys.exit(0)
+except socket.timeout:
+    sys.exit(1)
+PYEOF
+    then
+      echo "[player] UDP traffic detected on port $port, starting pipeline" >&2
+      return 0
+    fi
+    # Check for config change
+    local new_sig new_url
+    new_sig="$(config_sig)"
+    new_url="$(read_stream_url || true)"
+    if [[ "$new_sig" != "$CONFIG_SIG" ]] || [[ "$new_url" != "$STREAM_URL" ]]; then
+      return 1
+    fi
+    # Keep placeholder alive
+    if [[ -n "${LISTENING_PLACEHOLDER_PID:-}" ]] && ! kill -0 "$LISTENING_PLACEHOLDER_PID" >/dev/null 2>&1; then
+      start_listening_placeholder "$STREAM_URL"
+    fi
+  done
+}
+
 while true; do
   export CONFIG_FILE
   echo "[player] env DISPLAY=${DISPLAY:-<unset>} XAUTHORITY=${XAUTHORITY:-<unset>} VIDEO_SINK=$VIDEO_SINK" >&2
@@ -498,18 +539,23 @@ while true; do
       break
     fi
 
-    # Stream died (watchdog or error) — show placeholder then restart pipeline.
-    # For push-receive the pipeline restarts immediately and waits for packets
-    # via udpsrc; the listening placeholder shows in the meantime.
+    # Stream died (watchdog or error) — show listening placeholder and wait
+    # until the sender is actually sending before restarting the pipeline.
+    # For pull streams show unavailable and retry after RETRY_DELAY.
     if is_push_receive_url "$STREAM_URL"; then
       start_listening_placeholder "$STREAM_URL"
+      PROBE_PORT=$(echo "$STREAM_URL" | grep -oP ':\K[0-9]+' | head -1)
+      if ! wait_for_udp_data "${PROBE_PORT:-5000}"; then
+        # Config changed while waiting
+        stop_listening_placeholder
+        break
+      fi
+      stop_listening_placeholder
     else
       start_unavailable_placeholder
+      sleep "$RETRY_DELAY"
+      stop_unavailable_placeholder
     fi
-    sleep "$RETRY_DELAY"
-    stop_listening_placeholder
-    stop_unavailable_placeholder
-  done
   done
 
 done

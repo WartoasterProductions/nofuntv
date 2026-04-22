@@ -396,6 +396,37 @@ is_push_receive_url() {
   [[ "$1" =~ ^rtp:// ]] || [[ "$1" =~ ^srt:// ]]
 }
 
+# Block until UDP/SRT traffic is detected on the given port, or the config
+# changes.  Keeps LISTENING_PLACEHOLDER_PID alive the whole time.
+# Returns 0 when traffic detected, 1 when config changed.
+wait_for_push_traffic() {
+  local url="$1" port
+  port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
+  port=${port:-5000}
+  echo "[player] waiting for traffic on port $port before restarting pipeline..." >&2
+  while true; do
+    # Check for config change first
+    local new_sig new_url
+    new_sig="$(config_sig)"
+    new_url="$(read_stream_url || true)"
+    if [[ "$new_sig" != "$CONFIG_SIG" ]] || [[ "$new_url" != "$STREAM_URL" ]]; then
+      return 1
+    fi
+    # Check recv queue — nonzero means sender is active
+    local recv
+    recv=$(ss -ulnp 2>/dev/null | awk -v p=":$port" '$0 ~ p {print $2; exit}')
+    if [[ -n "$recv" && "$recv" -gt 0 ]]; then
+      echo "[player] traffic detected on port $port (recv=${recv}), starting pipeline" >&2
+      return 0
+    fi
+    # Revive placeholder if it died while we were waiting
+    if [[ -n "${LISTENING_PLACEHOLDER_PID:-}" ]] && ! kill -0 "$LISTENING_PLACEHOLDER_PID" >/dev/null 2>&1; then
+      start_listening_placeholder "$url"
+    fi
+    sleep 2
+  done
+}
+
 while true; do
   export CONFIG_FILE
   echo "[player] env DISPLAY=${DISPLAY:-<unset>} XAUTHORITY=${XAUTHORITY:-<unset>} VIDEO_SINK=$VIDEO_SINK" >&2
@@ -438,6 +469,17 @@ while true; do
   stop_listening_placeholder
   echo "[player] starting stream: $STREAM_URL" >&2
 
+  # For push-receive (RTP/SRT) hold the listening placeholder until we
+  # actually see incoming traffic — avoids a blank screen while waiting.
+  if is_push_receive_url "$STREAM_URL"; then
+    start_listening_placeholder "$STREAM_URL"
+    if ! wait_for_push_traffic "$STREAM_URL"; then
+      stop_listening_placeholder
+      continue
+    fi
+    stop_listening_placeholder
+  fi
+
   while true; do
     start_stream "$STREAM_URL"
     CONFIG_CHANGED=0
@@ -465,19 +507,22 @@ while true; do
       break
     fi
 
-    # Stream died unexpectedly — for push-receive show LISTENING, otherwise
-    # show the generic "stream unavailable" placeholder.
+    # Stream died unexpectedly — for push-receive show LISTENING and wait
+    # until traffic is detected before restarting the pipeline.
+    # For pull streams show the generic "stream unavailable" placeholder.
     if is_push_receive_url "$STREAM_URL"; then
       start_listening_placeholder "$STREAM_URL"
+      if ! wait_for_push_traffic "$STREAM_URL"; then
+        # Config changed while waiting — break to outer loop
+        stop_listening_placeholder
+        break
+      fi
+      stop_listening_placeholder
     else
       start_unavailable_placeholder
+      sleep "$RETRY_DELAY"
+      stop_unavailable_placeholder
     fi
-    sleep "$RETRY_DELAY"
-    # Kill the placeholder BEFORE retrying start_stream — otherwise both
-    # compete for the video sink and the compositor loses, causing an
-    # infinite "listening" loop.
-    stop_listening_placeholder
-    stop_unavailable_placeholder
   done
 
 done

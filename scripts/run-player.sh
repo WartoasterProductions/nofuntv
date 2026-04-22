@@ -221,22 +221,11 @@ start_stream() {
     rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
     rtp_port=${rtp_port:-5000}
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
-    local ip overlay
-    ip="$(wait_for_ip)"
-    # Restore previous working overlay format (uppercase) to match logs
-    overlay="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")"
     gst-launch-1.0 -e \
-      compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
-      videoconvert ! $VIDEO_SINK \
-      videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
-      textoverlay text="$overlay" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=0 shaded-background=true ! \
-      videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
-      comp.sink_0 \
       udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=524288 ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
-      comp.sink_1 \
+      $DECODER ! videoconvert ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -245,22 +234,11 @@ start_stream() {
   # ── SRT receive (srt://0.0.0.0:5000 or srt://sender:5000) ─────────────────
   if [[ "$url" =~ ^srt:// ]]; then
     echo "[player] using SRT receiver: $url (decoder=$DECODER)" >&2
-    local ip overlay
-    ip="$(wait_for_ip)"
-    # Restore previous working overlay format (uppercase) to match logs
-    overlay="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")"
     gst-launch-1.0 -e \
-      compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
-      videoconvert ! $VIDEO_SINK \
-      videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
-      textoverlay text="$overlay" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=0 shaded-background=true ! \
-      videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
-      comp.sink_0 \
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! videoconvert ! videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
-      comp.sink_1 \
+      $DECODER ! videoconvert ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return

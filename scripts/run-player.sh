@@ -45,17 +45,6 @@ if command -v inotifywait >/dev/null 2>&1; then
   HAS_INOTIFY=1
 fi
 
-# Detect GStreamer watchdog element (gst-plugins-bad); used to auto-kill the
-# pipeline after STREAM_WATCHDOG_SECS seconds of no incoming data.
-STREAM_WATCHDOG_SECS="${STREAM_WATCHDOG_SECS:-10}"
-WATCHDOG_EL=""
-if gst-inspect-1.0 watchdog >/dev/null 2>&1; then
-  WATCHDOG_EL="watchdog timeout=$(( STREAM_WATCHDOG_SECS * 1000 )) !"
-  echo "[player] stream watchdog: ${STREAM_WATCHDOG_SECS}s (watchdog element)" >&2
-else
-  echo "[player] stream watchdog: watchdog element not available, stream will not auto-expire" >&2
-fi
-
 # ── Single-instance lock ─────────────────────────────────────────────────────
 # Exactly one player process may hold the display at a time.
 # A second invocation (e.g. from a stale boot + manual restart) exits
@@ -236,7 +225,7 @@ start_stream() {
       udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=524288 ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! $WATCHDOG_EL $VIDEO_SINK \
+      $DECODER ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -249,7 +238,7 @@ start_stream() {
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! $WATCHDOG_EL $VIDEO_SINK \
+      $DECODER ! $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -396,35 +385,40 @@ is_push_receive_url() {
   [[ "$1" =~ ^rtp:// ]] || [[ "$1" =~ ^srt:// ]]
 }
 
-# Block until UDP/SRT traffic is detected on the given port, or the config
-# changes.  Keeps LISTENING_PLACEHOLDER_PID alive the whole time.
-# Returns 0 when traffic detected, 1 when config changed.
-wait_for_push_traffic() {
-  local url="$1" port
-  port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
-  port=${port:-5000}
-  echo "[player] waiting for traffic on port $port before restarting pipeline..." >&2
-  while true; do
-    # Check for config change first
-    local new_sig new_url
-    new_sig="$(config_sig)"
-    new_url="$(read_stream_url || true)"
-    if [[ "$new_sig" != "$CONFIG_SIG" ]] || [[ "$new_url" != "$STREAM_URL" ]]; then
-      return 1
-    fi
-    # Check recv queue — nonzero means sender is active
-    local recv
-    recv=$(ss -ulnp 2>/dev/null | awk -v p=":$port" '$0 ~ p {print $2; exit}')
-    if [[ -n "$recv" && "$recv" -gt 0 ]]; then
-      echo "[player] traffic detected on port $port (recv=${recv}), starting pipeline" >&2
-      return 0
-    fi
-    # Revive placeholder if it died while we were waiting
-    if [[ -n "${LISTENING_PLACEHOLDER_PID:-}" ]] && ! kill -0 "$LISTENING_PLACEHOLDER_PID" >/dev/null 2>&1; then
-      start_listening_placeholder "$url"
-    fi
-    sleep 2
-  done
+# Background watchdog for push-receive streams: kills CHILD_PID after
+# STREAM_WATCHDOG_SECS of zero recv-queue bytes (sender stopped sending).
+# Exits on its own once the pipeline is gone.
+STREAM_WATCHDOG_SECS="${STREAM_WATCHDOG_SECS:-10}"
+WATCHDOG_PID=""
+
+start_stream_watchdog() {
+  local port="$1" child="$2" idle=0
+  (
+    while kill -0 "$child" >/dev/null 2>&1; do
+      local recv
+      recv=$(ss -ulnp 2>/dev/null | awk -v p=":$port" '$0 ~ p {print $2; exit}')
+      if [[ -n "$recv" && "$recv" -gt 0 ]]; then
+        idle=0
+      else
+        idle=$(( idle + 2 ))
+        if [[ $idle -ge $STREAM_WATCHDOG_SECS ]]; then
+          echo "[player] watchdog: no traffic on port $port for ${STREAM_WATCHDOG_SECS}s — killing pipeline" >&2
+          kill "$child" >/dev/null 2>&1 || true
+          exit 0
+        fi
+      fi
+      sleep 2
+    done
+  ) &
+  WATCHDOG_PID=$!
+}
+
+stop_stream_watchdog() {
+  if [[ -n "${WATCHDOG_PID:-}" ]]; then
+    kill "$WATCHDOG_PID" >/dev/null 2>&1 || true
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+    WATCHDOG_PID=""
+  fi
 }
 
 while true; do
@@ -469,20 +463,15 @@ while true; do
   stop_listening_placeholder
   echo "[player] starting stream: $STREAM_URL" >&2
 
-  # For push-receive (RTP/SRT) hold the listening placeholder until we
-  # actually see incoming traffic — avoids a blank screen while waiting.
-  if is_push_receive_url "$STREAM_URL"; then
-    start_listening_placeholder "$STREAM_URL"
-    if ! wait_for_push_traffic "$STREAM_URL"; then
-      stop_listening_placeholder
-      continue
-    fi
-    stop_listening_placeholder
-  fi
-
   while true; do
     start_stream "$STREAM_URL"
     CONFIG_CHANGED=0
+
+    # Start background watchdog for push-receive streams
+    if is_push_receive_url "$STREAM_URL"; then
+      WPORT=$(echo "$STREAM_URL" | grep -oP ':\K[0-9]+' | head -1)
+      start_stream_watchdog "${WPORT:-5000}" "$CHILD_PID"
+    fi
 
     while kill -0 "$CHILD_PID" >/dev/null 2>&1; do
       wait_for_config_event
@@ -492,6 +481,7 @@ while true; do
       if [[ "$NEW_SIG" != "$CONFIG_SIG" ]] || [[ "$NEW_URL" != "$STREAM_URL" ]]; then
         echo "[player] config changed; restarting stream" >&2
         echo "[player] change detail: sig $CONFIG_SIG -> $NEW_SIG, url '$STREAM_URL' -> '${NEW_URL:-<empty>}'" >&2
+        stop_stream_watchdog
         kill "$CHILD_PID" >/dev/null 2>&1 || true
         wait "$CHILD_PID" 2>/dev/null || true
         CONFIG_CHANGED=1
@@ -499,6 +489,7 @@ while true; do
       fi
     done
 
+    stop_stream_watchdog
     wait "$CHILD_PID" 2>/dev/null || true
 
     if [[ "$CONFIG_CHANGED" -eq 1 ]]; then
@@ -507,22 +498,18 @@ while true; do
       break
     fi
 
-    # Stream died unexpectedly — for push-receive show LISTENING and wait
-    # until traffic is detected before restarting the pipeline.
-    # For pull streams show the generic "stream unavailable" placeholder.
+    # Stream died (watchdog or error) — show placeholder then restart pipeline.
+    # For push-receive the pipeline restarts immediately and waits for packets
+    # via udpsrc; the listening placeholder shows in the meantime.
     if is_push_receive_url "$STREAM_URL"; then
       start_listening_placeholder "$STREAM_URL"
-      if ! wait_for_push_traffic "$STREAM_URL"; then
-        # Config changed while waiting — break to outer loop
-        stop_listening_placeholder
-        break
-      fi
-      stop_listening_placeholder
     else
       start_unavailable_placeholder
-      sleep "$RETRY_DELAY"
-      stop_unavailable_placeholder
     fi
+    sleep "$RETRY_DELAY"
+    stop_listening_placeholder
+    stop_unavailable_placeholder
+  done
   done
 
 done

@@ -197,12 +197,15 @@ start_stream() {
     rtp_port=$(echo "$url" | grep -oP ':\K[0-9]+' | head -1)
     rtp_port=${rtp_port:-5000}
     echo "[player] using RTP/UDP receiver on port $rtp_port (decoder=$DECODER)" >&2
+    local ip overlay
+    ip="$(wait_for_ip)"
+    # Restore previous working overlay format (uppercase) to match logs
+    overlay="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")"
     gst-launch-1.0 -e \
       compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
       videoconvert ! $VIDEO_SINK \
       videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
-      textoverlay text="LISTENING FOR STREAM AT ${url}" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=-40 shaded-background=true ! \
-      textoverlay text="$(wait_for_ip)" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=40 shaded-background=true ! \
+      textoverlay text="$overlay" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=0 shaded-background=true ! \
       videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_0 \
       udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=2097152 ! \
@@ -217,12 +220,15 @@ start_stream() {
   # ── SRT receive (srt://0.0.0.0:5000 or srt://sender:5000) ─────────────────
   if [[ "$url" =~ ^srt:// ]]; then
     echo "[player] using SRT receiver: $url (decoder=$DECODER)" >&2
+    local ip overlay
+    ip="$(wait_for_ip)"
+    # Restore previous working overlay format (uppercase) to match logs
+    overlay="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")"
     gst-launch-1.0 -e \
       compositor name=comp sink_0::xpos=0 sink_0::ypos=0 sink_0::zorder=0 sink_1::xpos=0 sink_1::ypos=0 sink_1::zorder=1 sink_0::alpha=1.0 sink_1::alpha=1.0 ! \
       videoconvert ! $VIDEO_SINK \
       videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
-      textoverlay text="LISTENING FOR STREAM AT ${url}" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=-40 shaded-background=true ! \
-      textoverlay text="$(wait_for_ip)" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=40 shaded-background=true ! \
+      textoverlay text="$overlay" font-desc="$OVERLAY_FONT" halignment=center valignment=center deltay=0 shaded-background=true ! \
       videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       comp.sink_0 \
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
@@ -303,18 +309,16 @@ start_unavailable_placeholder() {
 
   local ip line1 line2
   ip="$(wait_for_ip)"
-  line1="STREAM UNAVAILABLE"
-  line2="${ip}"
+  # Restore previous working unavailable overlay (single-line uppercase)
+  overlay="$(printf 'STREAM UNAVAILABLE %s' "${ip}")"
 
   stop_unavailable_placeholder
-  echo "[player] unavailable placeholder: ${line1} (${line2})" >&2
+  echo "[player] unavailable placeholder: ${overlay}" >&2
 
   gst-launch-1.0 -e \
     videotestsrc pattern=smpte ! video/x-raw,framerate=30/1 ! \
-    textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
-      halignment=center valignment=center deltay=-40 shaded-background=true ! \
-    textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
-      halignment=center valignment=center deltay=40 shaded-background=true ! \
+    textoverlay text="$overlay" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=-30 shaded-background=true ! \
     videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
     videoconvert ! $VIDEO_SINK \
     2>/dev/null &
@@ -336,19 +340,17 @@ start_listening_placeholder() {
   local url="$1"
   local ip line1 line2
   ip="$(wait_for_ip)"
-  line1="LISTENING FOR STREAM AT ${url}"
-  line2="${ip}"
+  # Restore previous working overlay format (uppercase, include URL)
+  overlay="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")"
 
   stop_listening_placeholder
 
-  echo "[player] listening placeholder: ${line1} (${line2})" >&2
+  echo "[player] listening placeholder: ${overlay}" >&2
 
   gst-launch-1.0 -e \
-    videotestsrc pattern=smpte ! video/x-raw,framerate=30/1 ! \
-    textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
-      halignment=center valignment=center deltay=-40 shaded-background=true ! \
-    textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
-      halignment=center valignment=center deltay=40 shaded-background=true ! \
+    videotestsrc pattern=smpte is-live=true ! video/x-raw,framerate=30/1 ! \
+    textoverlay text="$overlay" font-desc="${OVERLAY_FONT}" \
+      halignment=center valignment=center deltay=-30 shaded-background=true ! \
     videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
     videoconvert ! $VIDEO_SINK \
     2>/dev/null &
@@ -358,10 +360,8 @@ start_listening_placeholder() {
     echo "[player] listening placeholder pipeline failed; trying without videotestsrc" >&2
     gst-launch-1.0 -e \
       videotestsrc pattern=black ! video/x-raw,framerate=30/1 ! \
-      textoverlay text="${line1}" font-desc="${OVERLAY_FONT}" \
-        halignment=center valignment=center deltay=-40 shaded-background=true ! \
-      textoverlay text="${line2}" font-desc="${OVERLAY_FONT}" \
-        halignment=center valignment=center deltay=40 shaded-background=true ! \
+      textoverlay text="$(printf 'LISTENING FOR STREAM AT %s (%s)' "$url" "${ip}")" font-desc="${OVERLAY_FONT}" \
+        halignment=center valignment=center deltay=-30 shaded-background=true ! \
       videoscale ! video/x-raw,width=$VIDEO_WIDTH,height=$VIDEO_HEIGHT,pixel-aspect-ratio=1/1 ! \
       videoconvert ! $VIDEO_SINK \
       2>/dev/null &

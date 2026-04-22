@@ -45,6 +45,17 @@ if command -v inotifywait >/dev/null 2>&1; then
   HAS_INOTIFY=1
 fi
 
+# Detect GStreamer watchdog element (gst-plugins-bad); used to auto-kill the
+# pipeline after STREAM_WATCHDOG_SECS seconds of no incoming data.
+STREAM_WATCHDOG_SECS="${STREAM_WATCHDOG_SECS:-10}"
+WATCHDOG_EL=""
+if gst-inspect-1.0 watchdog >/dev/null 2>&1; then
+  WATCHDOG_EL="watchdog timeout=$(( STREAM_WATCHDOG_SECS * 1000 )) !"
+  echo "[player] stream watchdog: ${STREAM_WATCHDOG_SECS}s (watchdog element)" >&2
+else
+  echo "[player] stream watchdog: watchdog element not available, stream will not auto-expire" >&2
+fi
+
 # ── Single-instance lock ─────────────────────────────────────────────────────
 # Exactly one player process may hold the display at a time.
 # A second invocation (e.g. from a stale boot + manual restart) exits
@@ -225,7 +236,7 @@ start_stream() {
       udpsrc port="$rtp_port" caps="$RTP_CAPS" buffer-size=524288 ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! $VIDEO_SINK \
+      $DECODER ! $WATCHDOG_EL $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return
@@ -238,7 +249,7 @@ start_stream() {
       srtsrc uri="$url" latency=120 caps="$RTP_CAPS" ! \
       rtpjitterbuffer latency="$RTP_JITTER" drop-on-latency=true ! rtph264depay ! h264parse config-interval=-1 ! \
       queue leaky=downstream max-size-buffers=60 max-size-bytes=0 max-size-time=0 ! \
-      $DECODER ! $VIDEO_SINK \
+      $DECODER ! $WATCHDOG_EL $VIDEO_SINK \
       2>/dev/null &
     CHILD_PID=$!
     return

@@ -568,15 +568,23 @@ ipcMain.handle('stream-start', (_, opts) => {
 
     let proc;
     if (config.srcType === 'file' && config.filePath) {
-      const fp   = config.filePath;
-      const dest = 'rtp://' + ips[0] + ':' + port;
+      const fp      = config.filePath;
+      const dest    = 'rtp://' + ips[0] + ':' + port;
+      const w       = config.width    || 1280;
+      const h       = config.height   || 720;
+      const fps     = config.fps      || 30;
+      const br      = config.bitrate  || 4000;
+      const kf      = config.keyframe || 30;
+      const preset  = config.preset   || 'ultrafast';
+      const tune    = config.tune     || 'zerolatency';
       const ffArgs = [
         '-re', '-stream_loop', '-1', '-i', fp,
         '-an',
-        '-vf', 'scale=720:480:force_original_aspect_ratio=decrease,pad=720:480:(ow-iw)/2:(oh-ih)/2,setsar=1',
-        '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
-        '-b:v', '1500k', '-maxrate', '1500k', '-bufsize', '3000k',
-        '-g', '30', '-keyint_min', '30',
+        '-vf', `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1`,
+        '-r', String(fps),
+        '-c:v', 'libx264', '-preset', preset, '-tune', tune,
+        '-b:v', br + 'k', '-maxrate', br + 'k', '-bufsize', (br * 2) + 'k',
+        '-g', String(kf), '-keyint_min', String(kf),
         '-bsf:v', 'h264_mp4toannexb', '-payload_type', '96', '-f', 'rtp', dest,
       ];
       proc = spawn('ffmpeg', ffArgs, { windowsHide: true });

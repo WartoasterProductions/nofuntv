@@ -6,3 +6,8 @@ npm-debug.log*
 gst-frontend/node_modules/
 backups/
 films/
+process-videos/
+*.mp4
+*.mov
+*.avi
+*.mkv
